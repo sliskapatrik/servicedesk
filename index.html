@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>ServiceDesk</title>
+
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+
+<!-- LOGIN -->
+
+<div class="login-screen" id="loginScreen">
+
+    <div class="login-card">
+
+        <div class="login-logo">
+            ServiceDesk
+        </div>
+
+        <h1>Sign in</h1>
+
+        <p class="login-subtitle">
+            Access your support workspace.
+        </p>
+
+        <form id="loginForm">
+
+            <label for="loginEmail">
+                Email
+            </label>
+
+            <input
+                type="email"
+                id="loginEmail"
+                placeholder="admin@servicedesk.local"
+                required
+            >
+
+            <label for="loginPassword">
+                Password
+            </label>
+
+            <input
+                type="password"
+                id="loginPassword"
+                placeholder="Password"
+                required
+            >
+
+            <p
+                class="login-error"
+                id="loginError"
+            ></p>
+
+            <button
+                type="submit"
+                class="primary-button login-button"
+            >
+                Sign in
+            </button>
+
+        </form>
+
+    </div>
+
+</div>
+
+
+<!-- APPLICATION -->
+
+<div class="app" id="app">
+
+    <aside class="sidebar">
+
+        <div class="logo">
+            ServiceDesk
+        </div>
+
+        <nav class="menu">
+
+            <button
+                class="menu-item active"
+                data-view="dashboard"
+            >
+                Dashboard
+            </button>
+
+            <button
+                class="menu-item"
+                data-view="tickets"
+            >
+                Tickets
+            </button>
+
+            <button
+                class="menu-item staff-only"
+                data-view="customers"
+            >
+                Customers
+            </button>
+
+            <button
+                class="menu-item admin-only"
+                data-view="users"
+            >
+                Users
+            </button>
+
+        </nav>
+
+    </aside>
+
+
+    <main class="main-content">
+
+        <header class="topbar">
+
+            <div>
+
+                <h1 id="pageTitle">
+                    Dashboard
+                </h1>
+
+                <p id="pageSubtitle">
+                    ServiceDesk overview
+                </p>
+
+            </div>
+
+            <div class="user-menu">
+
+                <div class="user-info">
+
+                    <strong id="currentUserName">
+                        User
+                    </strong>
+
+                    <span id="currentUserRole">
+                        role
+                    </span>
+
+                </div>
+
+                <button
+                    class="logout-button"
+                    id="logoutButton"
+                    type="button"
+                >
+                    Log out
+                </button>
+
+            </div>
+
+        </header>
+
+
+        <!-- DASHBOARD -->
+
+        <section
+            class="view active-view"
+            id="dashboardView"
+        >
+
+            <div class="stats">
+
+                <div class="stat-card">
+                    <h2 id="statNewTickets">0</h2>
+                    <p>New Tickets</p>
+                </div>
+
+                <div class="stat-card">
+                    <h2 id="statOpenTickets">0</h2>
+                    <p>Open Tickets</p>
+                </div>
+
+                <div class="stat-card">
+                    <h2 id="statCriticalTickets">0</h2>
+                    <p>Critical</p>
+                </div>
+
+                <div class="stat-card">
+                    <h2 id="statClosedTickets">0</h2>
+                    <p>Closed</p>
+                </div>
+
+            </div>
+
+
+            <section class="panel">
+
+                <div class="section-header">
+
+                    <div>
+                        <h2>Recent Tickets</h2>
+
+                        <p class="section-description">
+                            Most recently created support tickets.
+                        </p>
+                    </div>
+
+                    <button
+                        class="primary-button"
+                        id="dashboardAddTicketButton"
+                    >
+                        + New Ticket
+                    </button>
+
+                </div>
+
+                <div
+                    class="data-list"
+                    id="dashboardTicketList"
+                ></div>
+
+            </section>
+
+        </section>
+
+
+        <!-- TICKETS -->
+
+        <section
+            class="view"
+            id="ticketsView"
+        >
+
+            <section class="panel">
+
+                <div class="section-header">
+
+                    <div>
+                        <h2>Tickets</h2>
+
+                        <p class="section-description">
+                            Manage support requests and incidents.
+                        </p>
+                    </div>
+
+                    <button
+                        class="primary-button"
+                        id="addTicketButton"
+                    >
+                        + New Ticket
+                    </button>
+
+                </div>
+
+                <div class="filters">
+
+                    <select id="ticketStatusFilter">
+                        <option value="">All statuses</option>
+                        <option>New</option>
+                        <option>Open</option>
+                        <option>In Progress</option>
+                        <option>Waiting for Customer</option>
+                        <option>Resolved</option>
+                        <option>Closed</option>
+                    </select>
+
+                    <select id="ticketPriorityFilter">
+                        <option value="">All priorities</option>
+                        <option>Low</option>
+                        <option>Medium</option>
+                        <option>High</option>
+                        <option>Critical</option>
+                    </select>
+
+                    <input
+                        type="text"
+                        id="ticketSearch"
+                        placeholder="Search tickets..."
+                    >
+
+                </div>
+
+                <div
+                    class="data-list"
+                    id="ticketList"
+                ></div>
+
+            </section>
+
+        </section>
+
+
+        <!-- CUSTOMERS -->
+
+        <section
+            class="view"
+            id="customersView"
+        >
+
+            <section class="panel">
+
+                <div class="section-header">
+
+                    <div>
+                        <h2>Customers</h2>
+
+                        <p class="section-description">
+                            Customer and company directory.
+                        </p>
+                    </div>
+
+                    <button
+                        class="primary-button"
+                        id="addCustomerButton"
+                        type="button"
+                    >
+                        + New Customer
+                    </button>
+
+                </div>
+
+                <div
+                    class="data-list"
+                    id="customerList"
+                ></div>
+
+            </section>
+
+        </section>
+
+
+        <!-- USERS -->
+
+        <section
+            class="view"
+            id="usersView"
+        >
+
+            <section class="panel">
+
+                <div class="section-header">
+
+                    <div>
+                        <h2>Users</h2>
+
+                        <p class="section-description">
+                            ServiceDesk accounts and roles.
+                        </p>
+                    </div>
+
+                </div>
+
+                <div
+                    class="data-list"
+                    id="userList"
+                >
+                    <div class="empty-state">
+                        User management will be added next.
+                    </div>
+                </div>
+
+            </section>
+
+        </section>
+
+    </main>
+
+</div>
+
+
+<!-- NEW TICKET MODAL -->
+
+<div
+    class="modal"
+    id="ticketModal"
+>
+
+    <div class="modal-content">
+
+        <h2 id="ticketModalTitle">
+            New Ticket
+        </h2>
+
+        <form id="ticketForm">
+
+            <label
+                for="ticketCustomer"
+                id="ticketCustomerLabel"
+            >
+                Customer
+            </label>
+
+            <select
+                id="ticketCustomer"
+                required
+            >
+                <option value="">
+                    Select customer
+                </option>
+            </select>
+
+            <label for="ticketTitle">
+                Title
+            </label>
+
+            <input
+                type="text"
+                id="ticketTitle"
+                placeholder="Example: Email service unavailable"
+                required
+            >
+
+
+            <label for="ticketDescription">
+                Description
+            </label>
+
+            <textarea
+                id="ticketDescription"
+                placeholder="Describe the problem..."
+                required
+            ></textarea>
+
+
+            <label for="ticketPriority">
+                Priority
+            </label>
+
+            <select id="ticketPriority">
+
+                <option>
+                    Low
+                </option>
+
+                <option selected>
+                    Medium
+                </option>
+
+                <option>
+                    High
+                </option>
+
+                <option>
+                    Critical
+                </option>
+
+            </select>
+
+
+            <div class="form-buttons">
+
+                <button
+                    type="button"
+                    class="cancel-button"
+                    id="cancelTicketButton"
+                >
+                    Cancel
+                </button>
+
+                <button
+                    type="submit"
+                    class="primary-button"
+                >
+                    Create Ticket
+                </button>
+
+            </div>
+
+        </form>
+
+    </div>
+
+</div>
+
+
+<!-- NEW CUSTOMER MODAL -->
+
+<div class="modal" id="customerModal">
+
+    <div class="modal-content">
+
+        <h2>New Customer</h2>
+
+        <form id="customerForm">
+
+            <label for="customerCompany">Company</label>
+            <input
+                type="text"
+                id="customerCompany"
+                placeholder="Example: Alpine Systems AG"
+            >
+
+            <label for="customerContactName">Contact name</label>
+            <input
+                type="text"
+                id="customerContactName"
+                placeholder="Example: Martin Keller"
+                required
+            >
+
+            <label for="customerEmail">Email</label>
+            <input
+                type="email"
+                id="customerEmail"
+                placeholder="martin.keller@example.com"
+            >
+
+            <label for="customerPhone">Phone</label>
+            <input
+                type="text"
+                id="customerPhone"
+                placeholder="+41 79 555 10 10"
+            >
+
+            <div class="form-buttons">
+                <button
+                    type="button"
+                    class="cancel-button"
+                    id="cancelCustomerButton"
+                >
+                    Cancel
+                </button>
+
+                <button
+                    type="submit"
+                    class="primary-button"
+                >
+                    Create Customer
+                </button>
+            </div>
+
+        </form>
+
+    </div>
+
+</div>
+
+<script src="js/app.js"></script>
+
+</body>
+
+</html>
