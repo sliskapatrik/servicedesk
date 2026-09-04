@@ -113,10 +113,25 @@
                 <div class="section-header">
                     <div>
                         <h2>Users</h2>
-                        <p class="section-description">ServiceDesk accounts and roles.</p>
+                        <p class="section-description">Manage ServiceDesk accounts, roles and access.</p>
                     </div>
+                    <button class="primary-button" id="addUserButton" type="button">+ New User</button>
                 </div>
-                <div class="empty-state">Full user management will be added in a later phase.</div>
+                <div class="filters user-filters">
+                    <select id="userRoleFilter">
+                        <option value="">All roles</option>
+                        <option value="admin">Admin</option>
+                        <option value="technician">Technician</option>
+                        <option value="customer">Customer</option>
+                    </select>
+                    <select id="userStatusFilter">
+                        <option value="">All statuses</option>
+                        <option value="active">Active</option>
+                        <option value="inactive">Inactive</option>
+                    </select>
+                    <input id="userSearch" type="text" placeholder="Search users...">
+                </div>
+                <div class="data-list" id="userList"></div>
             </section>
         </section>
     </main>
@@ -144,8 +159,9 @@
 
 <div class="modal" id="customerModal">
     <div class="modal-content">
-        <h2>New Customer</h2>
+        <h2 id="customerModalTitle">New Customer</h2>
         <form id="customerForm">
+            <input type="hidden" id="customerEditId">
             <label for="customerCompany">Company</label>
             <input type="text" id="customerCompany" placeholder="Example: Alpine Systems AG">
             <label for="customerContactName">Contact name</label>
@@ -154,9 +170,61 @@
             <input type="email" id="customerEmail" placeholder="martin.keller@example.com">
             <label for="customerPhone">Phone</label>
             <input type="text" id="customerPhone" placeholder="+41 79 555 10 10">
+            <label for="customerUser">Linked customer account</label>
+            <select id="customerUser">
+                <option value="">No linked account</option>
+            </select>
             <div class="form-buttons">
                 <button type="button" class="cancel-button" id="cancelCustomerButton">Cancel</button>
                 <button type="submit" class="primary-button">Create Customer</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="modal" id="userModal">
+    <div class="modal-content">
+        <h2 id="userModalTitle">New User</h2>
+        <form id="userForm">
+            <input type="hidden" id="userEditId">
+            <label for="userName">Name</label>
+            <input id="userName" type="text" required>
+            <label for="userEmail">Email</label>
+            <input id="userEmail" type="email" required>
+            <label for="userRole">Role</label>
+            <select id="userRole" required>
+                <option value="technician">Technician</option>
+                <option value="customer">Customer</option>
+                <option value="admin">Admin</option>
+            </select>
+            <label for="userStatus">Status</label>
+            <select id="userStatus">
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+            </select>
+            <div id="userPasswordWrap">
+                <label for="userPassword">Temporary password</label>
+                <input id="userPassword" type="password" minlength="8" placeholder="Minimum 8 characters">
+            </div>
+            <div class="form-buttons">
+                <button type="button" class="cancel-button" id="cancelUserButton">Cancel</button>
+                <button type="submit" class="primary-button">Save User</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="modal" id="passwordModal">
+    <div class="modal-content small-modal">
+        <h2>Reset Password</h2>
+        <form id="passwordForm">
+            <input type="hidden" id="passwordUserId">
+            <p class="section-description" id="passwordUserLabel"></p>
+            <label for="newUserPassword">New password</label>
+            <input id="newUserPassword" type="password" minlength="8" required>
+            <div class="form-buttons">
+                <button type="button" class="cancel-button" id="cancelPasswordButton">Cancel</button>
+                <button type="submit" class="primary-button">Reset Password</button>
             </div>
         </form>
     </div>
@@ -196,6 +264,19 @@
                             <button type="submit" class="primary-button">Add comment</button>
                         </div>
                     </form>
+                </section>
+
+                <section class="detail-section">
+                    <div class="detail-section-title-row">
+                        <h3>Attachments</h3>
+                        <span class="muted" id="attachmentCount"></span>
+                    </div>
+                    <div class="attachment-list" id="attachmentList"></div>
+                    <form id="attachmentForm" class="attachment-form">
+                        <input id="attachmentFile" type="file" required>
+                        <button class="primary-button" type="submit">Upload attachment</button>
+                    </form>
+                    <p class="muted">Maximum file size: 10 MB.</p>
                 </section>
 
                 <section class="detail-section staff-only-detail" id="historySection">

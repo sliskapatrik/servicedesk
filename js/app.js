@@ -6,6 +6,8 @@ let tickets = [];
 let customers = [];
 let technicians = [];
 let currentTicketDetail = null;
+let users = [];
+let customerUsers = [];
 
 const $ = (id) => document.getElementById(id);
 
@@ -101,10 +103,17 @@ async function showApplication() {
     $("currentUserRole").textContent = loggedUser.role;
 
     applyRolePermissions();
-    await Promise.all([loadCustomers(), loadTechnicians(), loadTickets()]);
+    await Promise.all([
+        loadCustomers(),
+        loadTechnicians(),
+        loadTickets(),
+        loadCustomerUsers(),
+        loadUsers()
+    ]);
     renderDashboard();
     renderTickets();
     renderCustomers();
+    renderUsers();
 }
 
 function applyRolePermissions() {
@@ -155,6 +164,7 @@ function showView(name) {
     $("pageSubtitle").textContent = titles[name][1];
     if (name === "tickets") renderTickets();
     if (name === "customers") renderCustomers();
+    if (name === "users") renderUsers();
 }
 
 async function loadCustomers() {
@@ -167,6 +177,32 @@ async function loadCustomers() {
     } catch (error) {
         console.error("Customers API error:", error);
         customers = [];
+    }
+}
+
+async function loadCustomerUsers() {
+    if (!isStaff()) {
+        customerUsers = [];
+        return;
+    }
+    try {
+        customerUsers = await readJson(await authFetch(`${API_URL}/customer-users`));
+    } catch (error) {
+        console.error("Customer users API error:", error);
+        customerUsers = [];
+    }
+}
+
+async function loadUsers() {
+    if (!isAdmin()) {
+        users = [];
+        return;
+    }
+    try {
+        users = await readJson(await authFetch(`${API_URL}/users`));
+    } catch (error) {
+        console.error("Users API error:", error);
+        users = [];
     }
 }
 
@@ -214,18 +250,82 @@ function renderCustomers() {
         return;
     }
 
-    container.innerHTML = customers.map((customer) => `
-        <div class="data-card">
-            <div>
-                <h3>${escapeHtml(customer.company || customer.contactName)}</h3>
-                <p>${escapeHtml(customer.contactName)}</p>
-                <div class="card-meta">
-                    <span>${escapeHtml(customer.email || "No email")}</span>
-                    <span>${escapeHtml(customer.phone || "No phone")}</span>
+    container.innerHTML = customers.map((customer) => {
+        const linked = customerUsers.find((user) => user.id === customer.userId);
+        return `
+            <div class="data-card">
+                <div>
+                    <h3>${escapeHtml(customer.company || customer.contactName)}</h3>
+                    <p>${escapeHtml(customer.contactName)}</p>
+                    <div class="card-meta">
+                        <span>${escapeHtml(customer.email || "No email")}</span>
+                        <span>${escapeHtml(customer.phone || "No phone")}</span>
+                        <span>${linked ? `Account: ${escapeHtml(linked.email)}` : "No linked account"}</span>
+                    </div>
                 </div>
+                <div class="card-actions">
+                    <button class="secondary-button edit-customer-button" type="button" data-id="${escapeHtml(customer.id)}">Edit</button>
+                </div>
+            </div>
+        `;
+    }).join("");
+
+    container.querySelectorAll(".edit-customer-button").forEach((button) => {
+        button.addEventListener("click", () => openCustomerModal(button.dataset.id));
+    });
+}
+
+function renderUsers() {
+    const container = $("userList");
+    if (!container || !isAdmin()) return;
+
+    const role = $("userRoleFilter")?.value || "";
+    const status = $("userStatusFilter")?.value || "";
+    const search = ($("userSearch")?.value || "").trim().toLowerCase();
+
+    const filtered = users.filter((user) => {
+        const text = `${user.name} ${user.email} ${user.customerCompany || ""} ${user.customerContactName || ""}`.toLowerCase();
+        return (!role || user.role === role) &&
+            (!status || user.status === status) &&
+            (!search || text.includes(search));
+    });
+
+    if (!filtered.length) {
+        container.innerHTML = `<div class="empty-state">No users found.</div>`;
+        return;
+    }
+
+    container.innerHTML = filtered.map((user) => `
+        <div class="data-card user-card">
+            <div>
+                <div class="ticket-card-title-row">
+                    <h3>${escapeHtml(user.name)}</h3>
+                    <span class="badge role-badge">${escapeHtml(user.role)}</span>
+                    <span class="badge ${user.status === "active" ? "status-resolved" : "status-closed"}">${escapeHtml(user.status)}</span>
+                </div>
+                <p>${escapeHtml(user.email)}</p>
+                <div class="card-meta">
+                    <span>Created: ${escapeHtml(user.createdAt || "—")}</span>
+                    ${user.customerProfileId ? `<span>Customer: ${escapeHtml(user.customerCompany || user.customerContactName || "Linked")}</span>` : ""}
+                </div>
+            </div>
+            <div class="card-actions user-actions">
+                <button class="secondary-button edit-user-button" type="button" data-id="${escapeHtml(user.id)}">Edit</button>
+                <button class="secondary-button reset-user-button" type="button" data-id="${escapeHtml(user.id)}">Reset password</button>
+                ${user.id !== loggedUser.id ? `<button class="danger-small-button delete-user-button" type="button" data-id="${escapeHtml(user.id)}">Delete</button>` : ""}
             </div>
         </div>
     `).join("");
+
+    container.querySelectorAll(".edit-user-button").forEach((button) => {
+        button.addEventListener("click", () => openUserModal(button.dataset.id));
+    });
+    container.querySelectorAll(".reset-user-button").forEach((button) => {
+        button.addEventListener("click", () => openPasswordModal(button.dataset.id));
+    });
+    container.querySelectorAll(".delete-user-button").forEach((button) => {
+        button.addEventListener("click", () => deleteUser(button.dataset.id));
+    });
 }
 
 function statusClass(status) {
@@ -375,35 +475,175 @@ $("ticketForm").addEventListener("submit", async function (event) {
     }
 });
 
-$("addCustomerButton").addEventListener("click", function () {
-    $("customerForm").reset();
-    openModal("customerModal");
-});
+function populateCustomerUserSelect(selectedUserId = "", currentCustomerId = "") {
+    const select = $("customerUser");
+    select.innerHTML = `<option value="">No linked account</option>`;
 
+    customerUsers.forEach((user) => {
+        if (user.linkedCustomerId && user.linkedCustomerId !== currentCustomerId) return;
+        const option = document.createElement("option");
+        option.value = user.id;
+        option.textContent = `${user.name} — ${user.email}${user.status !== "active" ? " (inactive)" : ""}`;
+        select.appendChild(option);
+    });
+
+    select.value = selectedUserId || "";
+}
+
+function openCustomerModal(customerId = null) {
+    $("customerForm").reset();
+    $("customerEditId").value = customerId || "";
+    const customer = customers.find((item) => item.id === customerId);
+
+    if (customer) {
+        $("customerModalTitle").textContent = "Edit Customer";
+        $("customerCompany").value = customer.company || "";
+        $("customerContactName").value = customer.contactName || "";
+        $("customerEmail").value = customer.email || "";
+        $("customerPhone").value = customer.phone || "";
+        populateCustomerUserSelect(customer.userId || "", customer.id);
+    } else {
+        $("customerModalTitle").textContent = "New Customer";
+        populateCustomerUserSelect();
+    }
+
+    openModal("customerModal");
+}
+
+$("addCustomerButton").addEventListener("click", () => openCustomerModal());
 $("cancelCustomerButton").addEventListener("click", () => closeModal("customerModal"));
 
 $("customerForm").addEventListener("submit", async function (event) {
     event.preventDefault();
     try {
-        const response = await authFetch(`${API_URL}/customers`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                id: crypto.randomUUID(),
-                company: $("customerCompany").value.trim(),
-                contactName: $("customerContactName").value.trim(),
-                email: $("customerEmail").value.trim(),
-                phone: $("customerPhone").value.trim()
-            })
-        });
+        const editId = $("customerEditId").value;
+        const payload = {
+            company: $("customerCompany").value.trim(),
+            contactName: $("customerContactName").value.trim(),
+            email: $("customerEmail").value.trim(),
+            phone: $("customerPhone").value.trim(),
+            userId: $("customerUser").value || null
+        };
+
+        if (!editId) payload.id = crypto.randomUUID();
+
+        const response = await authFetch(
+            editId ? `${API_URL}/customers/${editId}` : `${API_URL}/customers`,
+            {
+                method: editId ? "PUT" : "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            }
+        );
         await readJson(response);
-        await loadCustomers();
+        await Promise.all([loadCustomers(), loadCustomerUsers(), loadUsers()]);
         closeModal("customerModal");
         renderCustomers();
+        renderUsers();
     } catch (error) {
-        showToast(`Could not create customer: ${error.message}`);
+        showToast(`Could not save customer: ${error.message}`);
     }
 });
+
+function openUserModal(userId = null) {
+    $("userForm").reset();
+    $("userEditId").value = userId || "";
+    const user = users.find((item) => item.id === userId);
+
+    if (user) {
+        $("userModalTitle").textContent = "Edit User";
+        $("userName").value = user.name || "";
+        $("userEmail").value = user.email || "";
+        $("userRole").value = user.role;
+        $("userStatus").value = user.status;
+        $("userPasswordWrap").style.display = "none";
+        $("userPassword").removeAttribute("required");
+    } else {
+        $("userModalTitle").textContent = "New User";
+        $("userStatus").value = "active";
+        $("userPasswordWrap").style.display = "";
+        $("userPassword").setAttribute("required", "required");
+    }
+
+    openModal("userModal");
+}
+
+$("addUserButton").addEventListener("click", () => openUserModal());
+$("cancelUserButton").addEventListener("click", () => closeModal("userModal"));
+
+$("userForm").addEventListener("submit", async function (event) {
+    event.preventDefault();
+    try {
+        const editId = $("userEditId").value;
+        const payload = {
+            name: $("userName").value.trim(),
+            email: $("userEmail").value.trim(),
+            role: $("userRole").value,
+            status: $("userStatus").value
+        };
+        if (!editId) payload.password = $("userPassword").value;
+
+        const response = await authFetch(
+            editId ? `${API_URL}/users/${editId}` : `${API_URL}/users`,
+            {
+                method: editId ? "PUT" : "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            }
+        );
+        await readJson(response);
+        await Promise.all([loadUsers(), loadTechnicians(), loadCustomerUsers(), loadCustomers()]);
+        closeModal("userModal");
+        renderUsers();
+        renderCustomers();
+    } catch (error) {
+        showToast(`Could not save user: ${error.message}`);
+    }
+});
+
+function openPasswordModal(userId) {
+    const user = users.find((item) => item.id === userId);
+    if (!user) return;
+    $("passwordForm").reset();
+    $("passwordUserId").value = userId;
+    $("passwordUserLabel").textContent = `${user.name} — ${user.email}`;
+    openModal("passwordModal");
+}
+
+$("cancelPasswordButton").addEventListener("click", () => closeModal("passwordModal"));
+$("passwordForm").addEventListener("submit", async function (event) {
+    event.preventDefault();
+    try {
+        const userId = $("passwordUserId").value;
+        const response = await authFetch(`${API_URL}/users/${userId}/reset-password`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ password: $("newUserPassword").value })
+        });
+        await readJson(response);
+        closeModal("passwordModal");
+        showToast("Password reset successfully.");
+    } catch (error) {
+        showToast(`Could not reset password: ${error.message}`);
+    }
+});
+
+async function deleteUser(userId) {
+    const user = users.find((item) => item.id === userId);
+    if (!user || !confirm(`Delete user ${user.name}?`)) return;
+    try {
+        await readJson(await authFetch(`${API_URL}/users/${userId}`, { method: "DELETE" }));
+        await Promise.all([loadUsers(), loadTechnicians(), loadCustomerUsers(), loadCustomers()]);
+        renderUsers();
+        renderCustomers();
+    } catch (error) {
+        showToast(`Could not delete user: ${error.message}`);
+    }
+}
+
+$("userRoleFilter").addEventListener("change", renderUsers);
+$("userStatusFilter").addEventListener("change", renderUsers);
+$("userSearch").addEventListener("input", renderUsers);
 
 async function openTicketDetail(ticketId) {
     try {
@@ -416,7 +656,7 @@ async function openTicketDetail(ticketId) {
 }
 
 function renderTicketDetail() {
-    const { ticket, comments, history } = currentTicketDetail;
+    const { ticket, comments, history, attachments = [] } = currentTicketDetail;
     const staff = isStaff();
 
     $("detailTicketId").textContent = ticket.id;
@@ -462,6 +702,7 @@ function renderTicketDetail() {
     }
 
     renderComments(comments);
+    renderAttachments(attachments);
     renderHistory(history);
     renderSlaState(ticket);
 }
@@ -484,6 +725,72 @@ function renderComments(comments) {
             <p>${escapeHtml(comment.message)}</p>
         </div>
     `).join("");
+}
+
+function formatFileSize(bytes) {
+    const size = Number(bytes || 0);
+    if (size < 1024) return `${size} B`;
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function renderAttachments(attachments) {
+    $("attachmentCount").textContent = `${attachments.length} file${attachments.length === 1 ? "" : "s"}`;
+    if (!attachments.length) {
+        $("attachmentList").innerHTML = `<div class="empty-state compact-empty">No attachments yet.</div>`;
+        return;
+    }
+
+    $("attachmentList").innerHTML = attachments.map((item) => `
+        <div class="attachment-item">
+            <div>
+                <strong>${escapeHtml(item.fileName)}</strong>
+                <p>${escapeHtml(item.userName || "Unknown user")} · ${escapeHtml(item.createdAt || "—")} · ${escapeHtml(formatFileSize(item.fileSize))}</p>
+            </div>
+            <div class="card-actions">
+                <button type="button" class="secondary-button download-attachment-button" data-id="${escapeHtml(item.id)}" data-name="${escapeHtml(item.fileName)}">Download</button>
+                ${isAdmin() ? `<button type="button" class="danger-small-button delete-attachment-button" data-id="${escapeHtml(item.id)}">Delete</button>` : ""}
+            </div>
+        </div>
+    `).join("");
+
+    $("attachmentList").querySelectorAll(".download-attachment-button").forEach((button) => {
+        button.addEventListener("click", () => downloadAttachment(button.dataset.id, button.dataset.name));
+    });
+    $("attachmentList").querySelectorAll(".delete-attachment-button").forEach((button) => {
+        button.addEventListener("click", () => deleteAttachment(button.dataset.id));
+    });
+}
+
+async function downloadAttachment(id, fileName) {
+    try {
+        const response = await authFetch(`${API_URL}/attachments/${id}/download`);
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            throw new Error(data.error || "Download failed");
+        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = fileName || "attachment";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+    } catch (error) {
+        showToast(`Could not download attachment: ${error.message}`);
+    }
+}
+
+async function deleteAttachment(id) {
+    if (!isAdmin() || !confirm("Delete this attachment?")) return;
+    try {
+        await readJson(await authFetch(`${API_URL}/attachments/${id}`, { method: "DELETE" }));
+        await openTicketDetail(currentTicketDetail.ticket.id);
+    } catch (error) {
+        showToast(`Could not delete attachment: ${error.message}`);
+    }
 }
 
 function renderHistory(history) {
@@ -577,6 +884,27 @@ $("commentForm").addEventListener("submit", async function (event) {
         await openTicketDetail(currentTicketDetail.ticket.id);
     } catch (error) {
         showToast(`Could not add comment: ${error.message}`);
+    }
+});
+
+$("attachmentForm").addEventListener("submit", async function (event) {
+    event.preventDefault();
+    if (!currentTicketDetail) return;
+    const file = $("attachmentFile").files[0];
+    if (!file) return;
+
+    try {
+        const formData = new FormData();
+        formData.append("file", file);
+        const response = await authFetch(`${API_URL}/tickets/${currentTicketDetail.ticket.id}/attachments`, {
+            method: "POST",
+            body: formData
+        });
+        await readJson(response);
+        $("attachmentForm").reset();
+        await openTicketDetail(currentTicketDetail.ticket.id);
+    } catch (error) {
+        showToast(`Could not upload attachment: ${error.message}`);
     }
 });
 

@@ -2,6 +2,10 @@ const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const crypto = require("crypto");
+const path = require("path");
+const fs = require("fs");
+const bcrypt = require("bcryptjs");
+const multer = require("multer");
 
 const db = require("./database");
 const authRoutes = require("./authRoutes");
@@ -37,6 +41,24 @@ app.use(express.json());
 
 app.use("/api/auth", authRoutes);
 app.use("/api", authenticateToken);
+
+const uploadsDir = path.join(__dirname, "uploads");
+fs.mkdirSync(uploadsDir, { recursive: true });
+
+const upload = multer({
+    storage: multer.diskStorage({
+        destination: function (req, file, cb) {
+            cb(null, uploadsDir);
+        },
+        filename: function (req, file, cb) {
+            const safeExt = path.extname(file.originalname).slice(0, 16);
+            cb(null, `${crypto.randomUUID()}${safeExt}`);
+        }
+    }),
+    limits: {
+        fileSize: 10 * 1024 * 1024
+    }
+});
 
 app.get("/", function (req, res) {
     res.send("ServiceDesk API is running.");
@@ -117,6 +139,232 @@ async function addHistory(
 }
 
 /* =========================================================
+   USERS
+========================================================= */
+
+app.get(
+    "/api/users",
+    requireRole("admin"),
+    async function (req, res) {
+        try {
+            const [rows] = await db.query(`
+                SELECT
+                    u.id,
+                    u.name,
+                    u.email,
+                    u.role,
+                    u.status,
+                    DATE_FORMAT(u.created_at, '%Y-%m-%d %H:%i:%s') AS createdAt,
+                    c.id AS customerProfileId,
+                    c.company AS customerCompany,
+                    c.contact_name AS customerContactName
+                FROM users u
+                LEFT JOIN customers c
+                    ON c.user_id = u.id
+                ORDER BY u.created_at DESC
+            `);
+
+            res.json(rows);
+        } catch (error) {
+            console.error("GET users error:", error);
+            res.status(500).json({ error: "Failed to load users" });
+        }
+    }
+);
+
+app.post(
+    "/api/users",
+    requireRole("admin"),
+    async function (req, res) {
+        try {
+            const { name, email, password, role, status } = req.body;
+            const allowedRoles = ["admin", "technician", "customer"];
+            const allowedStatuses = ["active", "inactive"];
+
+            if (!name || !email || !password || !allowedRoles.includes(role)) {
+                return res.status(400).json({ error: "Name, email, password and valid role are required" });
+            }
+
+            if (password.length < 8) {
+                return res.status(400).json({ error: "Password must be at least 8 characters" });
+            }
+
+            const id = crypto.randomUUID();
+            const passwordHash = await bcrypt.hash(password, 12);
+
+            await db.query(
+                `
+                INSERT INTO users (
+                    id, name, email, password_hash, role, status
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                `,
+                [
+                    id,
+                    name.trim(),
+                    email.trim().toLowerCase(),
+                    passwordHash,
+                    role,
+                    allowedStatuses.includes(status) ? status : "active"
+                ]
+            );
+
+            res.status(201).json({ success: true, id, message: "User created" });
+        } catch (error) {
+            console.error("POST user error:", error);
+            if (error.code === "ER_DUP_ENTRY") {
+                return res.status(409).json({ error: "A user with this email already exists" });
+            }
+            res.status(500).json({ error: "Failed to create user" });
+        }
+    }
+);
+
+app.put(
+    "/api/users/:id",
+    requireRole("admin"),
+    async function (req, res) {
+        try {
+            const { name, email, role, status } = req.body;
+            const allowedRoles = ["admin", "technician", "customer"];
+            const allowedStatuses = ["active", "inactive"];
+
+            if (!name || !email || !allowedRoles.includes(role) || !allowedStatuses.includes(status)) {
+                return res.status(400).json({ error: "Invalid user data" });
+            }
+
+            if (req.params.id === req.user.id && status !== "active") {
+                return res.status(400).json({ error: "You cannot deactivate your own account" });
+            }
+
+            if (req.params.id === req.user.id && role !== "admin") {
+                return res.status(400).json({ error: "You cannot remove your own admin role" });
+            }
+
+            if (role !== "customer") {
+                await db.query(
+                    `UPDATE customers SET user_id = NULL WHERE user_id = ?`,
+                    [req.params.id]
+                );
+            }
+
+            const [result] = await db.query(
+                `
+                UPDATE users
+                SET name = ?, email = ?, role = ?, status = ?
+                WHERE id = ?
+                `,
+                [name.trim(), email.trim().toLowerCase(), role, status, req.params.id]
+            );
+
+            if (!result.affectedRows) {
+                return res.status(404).json({ error: "User not found" });
+            }
+
+            res.json({ success: true, message: "User updated" });
+        } catch (error) {
+            console.error("PUT user error:", error);
+            if (error.code === "ER_DUP_ENTRY") {
+                return res.status(409).json({ error: "A user with this email already exists" });
+            }
+            res.status(500).json({ error: "Failed to update user" });
+        }
+    }
+);
+
+app.post(
+    "/api/users/:id/reset-password",
+    requireRole("admin"),
+    async function (req, res) {
+        try {
+            const { password } = req.body;
+            if (!password || password.length < 8) {
+                return res.status(400).json({ error: "Password must be at least 8 characters" });
+            }
+
+            const passwordHash = await bcrypt.hash(password, 12);
+            const [result] = await db.query(
+                `UPDATE users SET password_hash = ? WHERE id = ?`,
+                [passwordHash, req.params.id]
+            );
+
+            if (!result.affectedRows) {
+                return res.status(404).json({ error: "User not found" });
+            }
+
+            res.json({ success: true, message: "Password reset" });
+        } catch (error) {
+            console.error("RESET password error:", error);
+            res.status(500).json({ error: "Failed to reset password" });
+        }
+    }
+);
+
+app.delete(
+    "/api/users/:id",
+    requireRole("admin"),
+    async function (req, res) {
+        try {
+            if (req.params.id === req.user.id) {
+                return res.status(400).json({ error: "You cannot delete your own account" });
+            }
+
+            const [activityRows] = await db.query(
+                `
+                SELECT
+                    (SELECT COUNT(*) FROM comments WHERE user_id = ?) AS commentsCount,
+                    (SELECT COUNT(*) FROM attachments WHERE user_id = ?) AS attachmentsCount
+                `,
+                [req.params.id, req.params.id]
+            );
+
+            const activity = activityRows[0];
+            if (Number(activity.commentsCount) > 0 || Number(activity.attachmentsCount) > 0) {
+                return res.status(409).json({
+                    error: "This user has ticket activity. Deactivate the account instead of deleting it."
+                });
+            }
+
+            const [result] = await db.query(`DELETE FROM users WHERE id = ?`, [req.params.id]);
+            if (!result.affectedRows) {
+                return res.status(404).json({ error: "User not found" });
+            }
+
+            res.json({ success: true, message: "User deleted" });
+        } catch (error) {
+            console.error("DELETE user error:", error);
+            res.status(500).json({ error: "Failed to delete user" });
+        }
+    }
+);
+
+app.get(
+    "/api/customer-users",
+    requireRole("admin", "technician"),
+    async function (req, res) {
+        try {
+            const [rows] = await db.query(`
+                SELECT
+                    u.id,
+                    u.name,
+                    u.email,
+                    u.status,
+                    c.id AS linkedCustomerId
+                FROM users u
+                LEFT JOIN customers c
+                    ON c.user_id = u.id
+                WHERE u.role = 'customer'
+                ORDER BY u.name
+            `);
+            res.json(rows);
+        } catch (error) {
+            console.error("GET customer users error:", error);
+            res.status(500).json({ error: "Failed to load customer accounts" });
+        }
+    }
+);
+
+/* =========================================================
    CUSTOMERS
 ========================================================= */
 
@@ -158,7 +406,8 @@ app.post(
                 company,
                 contactName,
                 email,
-                phone
+                phone,
+                userId
             } = req.body;
 
             if (!id || !contactName) {
@@ -167,19 +416,31 @@ app.post(
                 });
             }
 
+            if (userId) {
+                const [userRows] = await db.query(
+                    `SELECT id FROM users WHERE id = ? AND role = 'customer' LIMIT 1`,
+                    [userId]
+                );
+                if (!userRows.length) {
+                    return res.status(400).json({ error: "Selected account is not a customer account" });
+                }
+            }
+
             await db.query(
                 `
                 INSERT INTO customers (
                     id,
+                    user_id,
                     company,
                     contact_name,
                     email,
                     phone
                 )
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?)
                 `,
                 [
                     id,
+                    userId || null,
                     company || null,
                     contactName,
                     email || null,
@@ -193,9 +454,56 @@ app.post(
             });
         } catch (error) {
             console.error("POST customer error:", error);
+            if (error.code === "ER_DUP_ENTRY") {
+                return res.status(409).json({ error: "This customer account is already linked to another customer profile" });
+            }
             res.status(500).json({
                 error: "Failed to create customer"
             });
+        }
+    }
+);
+
+app.put(
+    "/api/customers/:id",
+    requireRole("admin", "technician"),
+    async function (req, res) {
+        try {
+            const { company, contactName, email, phone, userId } = req.body;
+            if (!contactName) {
+                return res.status(400).json({ error: "Contact name is required" });
+            }
+
+            if (userId) {
+                const [userRows] = await db.query(
+                    `SELECT id FROM users WHERE id = ? AND role = 'customer' LIMIT 1`,
+                    [userId]
+                );
+                if (!userRows.length) {
+                    return res.status(400).json({ error: "Selected account is not a customer account" });
+                }
+            }
+
+            const [result] = await db.query(
+                `
+                UPDATE customers
+                SET user_id = ?, company = ?, contact_name = ?, email = ?, phone = ?
+                WHERE id = ?
+                `,
+                [userId || null, company || null, contactName, email || null, phone || null, req.params.id]
+            );
+
+            if (!result.affectedRows) {
+                return res.status(404).json({ error: "Customer not found" });
+            }
+
+            res.json({ success: true, message: "Customer updated" });
+        } catch (error) {
+            console.error("PUT customer error:", error);
+            if (error.code === "ER_DUP_ENTRY") {
+                return res.status(409).json({ error: "This customer account is already linked to another customer profile" });
+            }
+            res.status(500).json({ error: "Failed to update customer" });
         }
     }
 );
@@ -383,10 +691,28 @@ app.get("/api/tickets/:id", async function (req, res) {
             [req.params.id]
         );
 
+        const [attachments] = await db.query(
+            `
+            SELECT
+                a.id,
+                a.file_name AS fileName,
+                a.mime_type AS mimeType,
+                a.file_size AS fileSize,
+                DATE_FORMAT(a.created_at, '%Y-%m-%d %H:%i:%s') AS createdAt,
+                u.name AS userName
+            FROM attachments a
+            LEFT JOIN users u ON u.id = a.user_id
+            WHERE a.ticket_id = ?
+            ORDER BY a.created_at DESC
+            `,
+            [req.params.id]
+        );
+
         res.json({
             ticket: rows[0],
             comments,
-            history
+            history,
+            attachments
         });
     } catch (error) {
         console.error("GET ticket detail error:", error);
@@ -771,6 +1097,122 @@ app.post("/api/tickets/:id/comments", async function (req, res) {
     }
 });
 
+app.post(
+    "/api/tickets/:id/attachments",
+    upload.single("file"),
+    async function (req, res) {
+        try {
+            const ticketId = req.params.id;
+            const accessRow = await getTicketAccessRow(ticketId);
+
+            if (!accessRow) {
+                if (req.file) fs.unlink(req.file.path, () => {});
+                return res.status(404).json({ error: "Ticket not found" });
+            }
+
+            if (!canAccessTicket(req.user, accessRow)) {
+                if (req.file) fs.unlink(req.file.path, () => {});
+                return res.status(403).json({ error: "Access denied" });
+            }
+
+            if (!req.file) {
+                return res.status(400).json({ error: "Select a file to upload" });
+            }
+
+            const attachmentId = crypto.randomUUID();
+            await db.query(
+                `
+                INSERT INTO attachments (
+                    id, ticket_id, user_id, file_name, file_path, mime_type, file_size
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                `,
+                [
+                    attachmentId,
+                    ticketId,
+                    req.user.id,
+                    req.file.originalname,
+                    req.file.filename,
+                    req.file.mimetype || null,
+                    req.file.size
+                ]
+            );
+
+            res.status(201).json({ success: true, id: attachmentId, message: "Attachment uploaded" });
+        } catch (error) {
+            if (req.file) fs.unlink(req.file.path, () => {});
+            console.error("POST attachment error:", error);
+            if (error.code === "LIMIT_FILE_SIZE") {
+                return res.status(413).json({ error: "File is too large. Maximum size is 10 MB." });
+            }
+            res.status(500).json({ error: "Failed to upload attachment" });
+        }
+    }
+);
+
+app.get("/api/attachments/:id/download", async function (req, res) {
+    try {
+        const [rows] = await db.query(
+            `
+            SELECT
+                a.id,
+                a.ticket_id,
+                a.file_name,
+                a.file_path,
+                t.assigned_user_id,
+                c.user_id AS customer_user_id
+            FROM attachments a
+            INNER JOIN tickets t ON t.id = a.ticket_id
+            INNER JOIN customers c ON c.id = t.customer_id
+            WHERE a.id = ?
+            LIMIT 1
+            `,
+            [req.params.id]
+        );
+
+        if (!rows.length) {
+            return res.status(404).json({ error: "Attachment not found" });
+        }
+
+        const item = rows[0];
+        if (!canAccessTicket(req.user, item)) {
+            return res.status(403).json({ error: "Access denied" });
+        }
+
+        const absolutePath = path.join(uploadsDir, item.file_path);
+        if (!fs.existsSync(absolutePath)) {
+            return res.status(404).json({ error: "Stored file was not found" });
+        }
+
+        res.download(absolutePath, item.file_name);
+    } catch (error) {
+        console.error("DOWNLOAD attachment error:", error);
+        res.status(500).json({ error: "Failed to download attachment" });
+    }
+});
+
+app.delete(
+    "/api/attachments/:id",
+    requireRole("admin"),
+    async function (req, res) {
+        try {
+            const [rows] = await db.query(`SELECT file_path FROM attachments WHERE id = ? LIMIT 1`, [req.params.id]);
+            if (!rows.length) {
+                return res.status(404).json({ error: "Attachment not found" });
+            }
+
+            await db.query(`DELETE FROM attachments WHERE id = ?`, [req.params.id]);
+            const absolutePath = path.join(uploadsDir, rows[0].file_path);
+            if (fs.existsSync(absolutePath)) fs.unlinkSync(absolutePath);
+
+            res.json({ success: true, message: "Attachment deleted" });
+        } catch (error) {
+            console.error("DELETE attachment error:", error);
+            res.status(500).json({ error: "Failed to delete attachment" });
+        }
+    }
+);
+
 app.delete(
     "/api/tickets/:id",
     requireRole("admin"),
@@ -802,6 +1244,16 @@ app.delete(
         }
     }
 );
+
+app.use(function (error, req, res, next) {
+    if (error instanceof multer.MulterError) {
+        if (error.code === "LIMIT_FILE_SIZE") {
+            return res.status(413).json({ error: "File is too large. Maximum size is 10 MB." });
+        }
+        return res.status(400).json({ error: error.message });
+    }
+    next(error);
+});
 
 app.listen(PORT, function () {
     console.log(`ServiceDesk API running on http://localhost:${PORT}`);

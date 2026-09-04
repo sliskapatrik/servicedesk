@@ -1003,3 +1003,119 @@ button {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
+
+/* =========================================================
+   v0.3 - USERS / ATTACHMENTS
+========================================================= */
+
+.secondary-button {
+    padding: 9px 13px;
+    border-radius: 8px;
+    background: #eef2ff;
+    color: #3730a3;
+}
+
+.secondary-button:hover {
+    background: #e0e7ff;
+}
+
+.danger-small-button {
+    padding: 9px 13px;
+    border-radius: 8px;
+    background: #fee2e2;
+    color: #b91c1c;
+}
+
+.danger-small-button:hover {
+    background: #fecaca;
+}
+
+.user-card h3,
+.data-card h3 {
+    margin: 0 0 6px;
+}
+
+.user-card p,
+.data-card p {
+    margin: 0;
+    color: #6b7280;
+}
+
+.user-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.role-badge {
+    background: #e0e7ff;
+    color: #3730a3;
+    text-transform: capitalize;
+}
+
+.user-filters {
+    margin-bottom: 20px;
+}
+
+.small-modal {
+    max-width: 440px;
+}
+
+#userPasswordWrap {
+    display: flex;
+    flex-direction: column;
+}
+
+.attachment-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.attachment-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 13px 14px;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    background: #f9fafb;
+}
+
+.attachment-item strong {
+    overflow-wrap: anywhere;
+}
+
+.attachment-item p {
+    margin: 5px 0 0;
+    color: #6b7280;
+    font-size: 12px;
+}
+
+.attachment-form {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.attachment-form input[type="file"] {
+    flex: 1;
+    min-width: 0;
+    padding: 9px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    background: white;
+}
+
+@media (max-width: 760px) {
+    .attachment-item,
+    .attachment-form {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .user-actions {
+        justify-content: flex-start;
+    }
+}
