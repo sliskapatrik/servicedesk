@@ -211,6 +211,7 @@ button {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 36px;
 
     margin-bottom: 32px;
 }
@@ -1312,8 +1313,8 @@ body.modal-open {
 .topbar-search-wrap {
     position: relative;
     flex: 1;
-    max-width: 520px;
-    margin-left: auto;
+    max-width: 620px;
+    margin-left: 12px;
     margin-right: 24px;
 }
 
