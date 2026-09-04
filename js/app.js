@@ -10,6 +10,10 @@ let users = [];
 let customerUsers = [];
 let notifications = [];
 let analyticsData = null;
+let categories = [];
+let tags = [];
+let knowledgeArticles = [];
+let savedFilters = [];
 
 const $ = (id) => document.getElementById(id);
 
@@ -111,7 +115,11 @@ async function showApplication() {
         loadTickets(),
         loadCustomerUsers(),
         loadUsers(),
-        loadNotifications()
+        loadNotifications(),
+        loadCategories(),
+        loadTags(),
+        loadKnowledge(),
+        loadSavedFilters()
     ]);
     renderDashboard();
     renderTickets();
@@ -144,7 +152,8 @@ const views = {
     tickets: $("ticketsView"),
     customers: $("customersView"),
     users: $("usersView"),
-    reports: $("reportsView")
+    reports: $("reportsView"),
+    knowledge: $("knowledgeView")
 };
 
 const titles = {
@@ -152,7 +161,8 @@ const titles = {
     tickets: ["Tickets", "Support requests and incidents"],
     customers: ["Customers", "Customer directory"],
     users: ["Users", "ServiceDesk accounts"],
-    reports: ["Reports", "Analytics, SLA performance and workload"]
+    reports: ["Reports", "Analytics, SLA performance and workload"],
+    knowledge: ["Knowledge Base", "Solutions, FAQ and troubleshooting articles"]
 };
 
 document.querySelectorAll(".menu-item").forEach((button) => {
@@ -171,6 +181,7 @@ function showView(name) {
     if (name === "customers") renderCustomers();
     if (name === "users") renderUsers();
     if (name === "reports" && isAdmin()) loadAnalytics();
+    if (name === "knowledge") renderKnowledge();
 }
 
 async function loadAnalytics() {
@@ -602,12 +613,14 @@ function toDatetimeLocal(value) {
 function renderTickets() {
     const status = $("ticketStatusFilter").value;
     const priority = $("ticketPriorityFilter").value;
+    const category = $("ticketCategoryFilter")?.value || "";
     const search = $("ticketSearch").value.trim().toLowerCase();
 
     const filtered = tickets.filter((ticket) => {
         const customerText = `${ticket.company || ""} ${ticket.customerName || ""}`.toLowerCase();
         return (!status || ticket.status === status) &&
             (!priority || ticket.priority === priority) &&
+            (!category || ticket.categoryId === category) &&
             (!search || ticket.title.toLowerCase().includes(search) || (ticket.ticketNumber || "").toLowerCase().includes(search) || customerText.includes(search));
     });
 
@@ -631,6 +644,8 @@ function renderTicketCards(container, items) {
                 <div class="card-meta">
                     <span>${escapeHtml(ticket.company || ticket.customerName || "Unknown customer")}</span>
                     <span>Technician: ${escapeHtml(ticket.technician || "Unassigned")}</span>
+                    ${ticket.categoryName ? `<span>Category: ${escapeHtml(ticket.categoryName)}</span>` : ""}
+                    ${ticket.tagNames ? `<span>Tags: ${escapeHtml(ticket.tagNames)}</span>` : ""}
                     <span>Created: ${escapeHtml(ticket.createdAt || "—")}</span>
                     ${ticket.slaDeadline ? `<span>SLA: ${escapeHtml(ticket.slaDeadline)}</span>` : ""}
                 </div>
@@ -649,6 +664,7 @@ function renderTicketCards(container, items) {
 
 $("ticketStatusFilter").addEventListener("change", renderTickets);
 $("ticketPriorityFilter").addEventListener("change", renderTickets);
+$("ticketCategoryFilter")?.addEventListener("change", renderTickets);
 $("ticketSearch").addEventListener("input", renderTickets);
 
 function populateTicketCustomerSelect() {
@@ -687,6 +703,8 @@ function closeModal(id) {
 function openTicketModal() {
     $("ticketForm").reset();
     if (loggedUser.role !== "customer") populateTicketCustomerSelect();
+    populateCategorySelect("ticketCategory");
+    populateTagSelect("ticketTags");
     openModal("ticketModal");
 }
 
@@ -705,10 +723,19 @@ $("ticketForm").addEventListener("submit", async function (event) {
                 customerId: loggedUser.role === "customer" ? null : $("ticketCustomer").value,
                 title: $("ticketTitle").value.trim(),
                 description: $("ticketDescription").value.trim(),
-                priority: $("ticketPriority").value
+                priority: $("ticketPriority").value,
+                categoryId: $("ticketCategory").value || null
             })
         });
-        await readJson(response);
+        const created = await readJson(response);
+        const tagIds = Array.from($("ticketTags").selectedOptions).map((option) => option.value);
+        if (created.id && tagIds.length) {
+            await readJson(await authFetch(`${API_URL}/tickets/${created.id}/tags`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ tagIds })
+            }));
+        }
         await Promise.all([loadTickets(), loadNotifications()]);
         closeModal("ticketModal");
         renderDashboard();
@@ -891,6 +918,12 @@ $("userSearch").addEventListener("input", renderUsers);
 async function openTicketDetail(ticketId) {
     try {
         currentTicketDetail = await readJson(await authFetch(`${API_URL}/tickets/${ticketId}`));
+        const [ticketTags, linkedArticles] = await Promise.all([
+            readJson(await authFetch(`${API_URL}/tickets/${ticketId}/tags`)),
+            readJson(await authFetch(`${API_URL}/tickets/${ticketId}/articles`))
+        ]);
+        currentTicketDetail.ticketTags = ticketTags;
+        currentTicketDetail.linkedArticles = linkedArticles;
         renderTicketDetail();
         openModal("ticketDetailModal");
     } catch (error) {
@@ -899,7 +932,7 @@ async function openTicketDetail(ticketId) {
 }
 
 function renderTicketDetail() {
-    const { ticket, comments, history, attachments = [] } = currentTicketDetail;
+    const { ticket, comments, history, attachments = [], ticketTags = [], linkedArticles = [] } = currentTicketDetail;
     const staff = isStaff();
 
     $("detailTicketId").textContent = ticket.ticketNumber || ticket.id;
@@ -910,6 +943,8 @@ function renderTicketDetail() {
     $("detailDescription").textContent = ticket.description;
     $("detailStatus").value = ticket.status;
     $("detailPriority").value = ticket.priority;
+    populateCategorySelect("detailCategory", ticket.categoryId || "");
+    populateTagSelect("detailTags", ticketTags.map((item) => item.id));
     $("detailSla").value = toDatetimeLocal(ticket.slaDeadline);
     $("detailApplySlaRule").checked = false;
     updateSlaRuleHint();
@@ -949,6 +984,7 @@ function renderTicketDetail() {
     renderComments(comments);
     renderAttachments(attachments);
     renderHistory(history);
+    renderLinkedArticles(linkedArticles);
     renderSlaState(ticket);
 }
 
@@ -1106,11 +1142,18 @@ $("saveTicketButton").addEventListener("click", async function () {
                 assignedUserId: $("detailTechnician").value || null,
                 priority: $("detailPriority").value,
                 status: $("detailStatus").value,
+                categoryId: $("detailCategory").value || null,
                 slaDeadline: $("detailSla").value || null,
                 applySlaRule: $("detailApplySlaRule").checked
             })
         });
         await readJson(response);
+        const tagIds = Array.from($("detailTags").selectedOptions).map((option) => option.value);
+        await readJson(await authFetch(`${API_URL}/tickets/${currentTicketDetail.ticket.id}/tags`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tagIds })
+        }));
         await Promise.all([loadTickets(), loadNotifications()]);
         await openTicketDetail(currentTicketDetail.ticket.id);
         renderDashboard();
@@ -1196,6 +1239,307 @@ if ($("refreshReportsButton")) {
 if ($("exportTicketsButton")) {
     $("exportTicketsButton").addEventListener("click", exportTicketsCsv);
 }
+
+
+/* =========================================================
+   V0.6 - KNOWLEDGE, CATEGORIES, TAGS, SAVED FILTERS, SEARCH
+========================================================= */
+
+async function loadCategories() {
+    try {
+        categories = await readJson(await authFetch(`${API_URL}/categories`));
+    } catch (error) {
+        console.error("Categories API error:", error);
+        categories = [];
+    }
+    populateCategorySelect("ticketCategoryFilter");
+    populateCategorySelect("knowledgeCategoryFilter");
+    populateCategorySelect("knowledgeCategory");
+}
+
+async function loadTags() {
+    try {
+        tags = await readJson(await authFetch(`${API_URL}/tags`));
+    } catch (error) {
+        console.error("Tags API error:", error);
+        tags = [];
+    }
+}
+
+async function loadKnowledge(query = "") {
+    try {
+        knowledgeArticles = await readJson(await authFetch(`${API_URL}/knowledge${query ? `?q=${encodeURIComponent(query)}` : ""}`));
+    } catch (error) {
+        console.error("Knowledge API error:", error);
+        knowledgeArticles = [];
+    }
+    renderKnowledge();
+}
+
+async function loadSavedFilters() {
+    try {
+        savedFilters = await readJson(await authFetch(`${API_URL}/saved-filters`));
+    } catch (error) {
+        console.error("Saved filters API error:", error);
+        savedFilters = [];
+    }
+    renderSavedFilters();
+}
+
+function populateCategorySelect(id, selected = "") {
+    const select = $(id);
+    if (!select) return;
+    const firstLabel = id.includes("Filter") ? "All categories" : "No category";
+    select.innerHTML = `<option value="">${firstLabel}</option>` + categories.map((category) =>
+        `<option value="${escapeHtml(category.id)}">${escapeHtml(category.name)}</option>`
+    ).join("");
+    select.value = selected || "";
+}
+
+function populateTagSelect(id, selectedIds = []) {
+    const select = $(id);
+    if (!select) return;
+    const selected = new Set(selectedIds || []);
+    select.innerHTML = tags.map((tag) =>
+        `<option value="${escapeHtml(tag.id)}" ${selected.has(tag.id) ? "selected" : ""}>${escapeHtml(tag.name)}</option>`
+    ).join("");
+}
+
+function renderKnowledge() {
+    const container = $("knowledgeList");
+    if (!container) return;
+    const query = ($("knowledgeSearch")?.value || "").trim().toLowerCase();
+    const category = $("knowledgeCategoryFilter")?.value || "";
+    const filtered = knowledgeArticles.filter((article) => {
+        const text = `${article.title} ${article.summary || ""} ${article.content || ""}`.toLowerCase();
+        return (!query || text.includes(query)) && (!category || article.categoryId === category);
+    });
+    if (!filtered.length) {
+        container.innerHTML = `<div class="empty-state">No knowledge articles found.</div>`;
+        return;
+    }
+    container.innerHTML = filtered.map((article) => `
+        <article class="knowledge-card">
+            <div class="knowledge-card-head">
+                <div>
+                    <div class="ticket-card-title-row">
+                        <h3>${escapeHtml(article.title)}</h3>
+                        ${article.visibility === "internal" ? `<span class="badge internal-badge">Internal</span>` : ""}
+                    </div>
+                    <p>${escapeHtml(article.summary || "No summary")}</p>
+                    <div class="card-meta">
+                        ${article.categoryName ? `<span>${escapeHtml(article.categoryName)}</span>` : ""}
+                        <span>Updated: ${escapeHtml(article.updatedAt || "—")}</span>
+                        <span>Author: ${escapeHtml(article.authorName || "Unknown")}</span>
+                    </div>
+                </div>
+                ${isStaff() ? `<div class="card-actions"><button class="secondary-button edit-knowledge-button" type="button" data-id="${escapeHtml(article.id)}">Edit</button>${isAdmin() ? `<button class="danger-small-button delete-knowledge-button" type="button" data-id="${escapeHtml(article.id)}">Delete</button>` : ""}</div>` : ""}
+            </div>
+            <div class="knowledge-content">${escapeHtml(article.content).replace(/\n/g, "<br>")}</div>
+        </article>
+    `).join("");
+    container.querySelectorAll(".edit-knowledge-button").forEach((button) => button.addEventListener("click", () => openKnowledgeModal(button.dataset.id)));
+    container.querySelectorAll(".delete-knowledge-button").forEach((button) => button.addEventListener("click", () => deleteKnowledge(button.dataset.id)));
+}
+
+function openKnowledgeModal(articleId = null) {
+    $("knowledgeForm").reset();
+    $("knowledgeEditId").value = articleId || "";
+    populateCategorySelect("knowledgeCategory");
+    const article = knowledgeArticles.find((item) => item.id === articleId);
+    $("knowledgeModalTitle").textContent = article ? "Edit Knowledge Article" : "New Knowledge Article";
+    if (article) {
+        $("knowledgeTitle").value = article.title || "";
+        $("knowledgeSummary").value = article.summary || "";
+        $("knowledgeContent").value = article.content || "";
+        $("knowledgeCategory").value = article.categoryId || "";
+        $("knowledgeVisibility").value = article.visibility || "public";
+        $("knowledgeStatus").value = article.status || "published";
+    }
+    openModal("knowledgeModal");
+}
+
+async function deleteKnowledge(id) {
+    if (!isAdmin() || !confirm("Delete this knowledge article?")) return;
+    try {
+        await readJson(await authFetch(`${API_URL}/knowledge/${id}`, { method: "DELETE" }));
+        await loadKnowledge();
+    } catch (error) {
+        showToast(`Could not delete article: ${error.message}`);
+    }
+}
+
+function renderLinkedArticles(items) {
+    const container = $("linkedArticleList");
+    if (!container) return;
+    $("linkedArticleCount").textContent = `${items.length} linked`;
+    if (!items.length) {
+        container.innerHTML = `<div class="empty-state compact-empty">No related articles linked.</div>`;
+    } else {
+        container.innerHTML = items.map((article) => `
+            <div class="linked-article-item">
+                <div><strong>${escapeHtml(article.title)}</strong><p>${escapeHtml(article.summary || "")}</p></div>
+                ${isStaff() ? `<button class="danger-small-button unlink-article-button" type="button" data-id="${escapeHtml(article.id)}">Unlink</button>` : ""}
+            </div>
+        `).join("");
+        container.querySelectorAll(".unlink-article-button").forEach((button) => {
+            button.addEventListener("click", async () => {
+                try {
+                    await readJson(await authFetch(`${API_URL}/tickets/${currentTicketDetail.ticket.id}/articles/${button.dataset.id}`, { method: "DELETE" }));
+                    await openTicketDetail(currentTicketDetail.ticket.id);
+                } catch (error) {
+                    showToast(`Could not unlink article: ${error.message}`);
+                }
+            });
+        });
+    }
+    const select = $("linkArticleSelect");
+    if (select) {
+        const linked = new Set(items.map((item) => item.id));
+        select.innerHTML = `<option value="">Select article...</option>` + knowledgeArticles
+            .filter((article) => !linked.has(article.id))
+            .map((article) => `<option value="${escapeHtml(article.id)}">${escapeHtml(article.title)}</option>`).join("");
+    }
+}
+
+function renderSavedFilters() {
+    const select = $("savedFilterSelect");
+    if (!select) return;
+    select.innerHTML = `<option value="">Saved filters</option>` + savedFilters.map((filter) =>
+        `<option value="${escapeHtml(filter.id)}">${escapeHtml(filter.name)}</option>`
+    ).join("");
+}
+
+$("knowledgeSearch")?.addEventListener("input", renderKnowledge);
+$("knowledgeCategoryFilter")?.addEventListener("change", renderKnowledge);
+$("addKnowledgeButton")?.addEventListener("click", () => openKnowledgeModal());
+$("cancelKnowledgeButton")?.addEventListener("click", () => closeModal("knowledgeModal"));
+
+$("knowledgeForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+        const id = $("knowledgeEditId").value;
+        const response = await authFetch(`${API_URL}/knowledge${id ? `/${id}` : ""}`, {
+            method: id ? "PUT" : "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                title: $("knowledgeTitle").value.trim(),
+                summary: $("knowledgeSummary").value.trim(),
+                content: $("knowledgeContent").value.trim(),
+                categoryId: $("knowledgeCategory").value || null,
+                visibility: $("knowledgeVisibility").value,
+                status: $("knowledgeStatus").value
+            })
+        });
+        await readJson(response);
+        closeModal("knowledgeModal");
+        await loadKnowledge();
+    } catch (error) {
+        showToast(`Could not save article: ${error.message}`);
+    }
+});
+
+$("linkArticleButton")?.addEventListener("click", async () => {
+    if (!currentTicketDetail || !$("linkArticleSelect").value) return;
+    try {
+        await readJson(await authFetch(`${API_URL}/tickets/${currentTicketDetail.ticket.id}/articles`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ articleId: $("linkArticleSelect").value })
+        }));
+        await openTicketDetail(currentTicketDetail.ticket.id);
+    } catch (error) {
+        showToast(`Could not link article: ${error.message}`);
+    }
+});
+
+$("saveCurrentFilterButton")?.addEventListener("click", async () => {
+    const name = prompt("Name this filter:");
+    if (!name) return;
+    try {
+        await readJson(await authFetch(`${API_URL}/saved-filters`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                name,
+                filter: {
+                    status: $("ticketStatusFilter").value,
+                    priority: $("ticketPriorityFilter").value,
+                    category: $("ticketCategoryFilter").value,
+                    search: $("ticketSearch").value
+                }
+            })
+        }));
+        await loadSavedFilters();
+    } catch (error) {
+        showToast(`Could not save filter: ${error.message}`);
+    }
+});
+
+$("savedFilterSelect")?.addEventListener("change", () => {
+    const item = savedFilters.find((filter) => filter.id === $("savedFilterSelect").value);
+    if (!item) return;
+    $("ticketStatusFilter").value = item.filter?.status || "";
+    $("ticketPriorityFilter").value = item.filter?.priority || "";
+    $("ticketCategoryFilter").value = item.filter?.category || "";
+    $("ticketSearch").value = item.filter?.search || "";
+    renderTickets();
+});
+
+$("deleteSavedFilterButton")?.addEventListener("click", async () => {
+    const id = $("savedFilterSelect")?.value;
+    if (!id) return;
+    try {
+        await readJson(await authFetch(`${API_URL}/saved-filters/${id}`, { method: "DELETE" }));
+        await loadSavedFilters();
+    } catch (error) {
+        showToast(`Could not delete filter: ${error.message}`);
+    }
+});
+
+let globalSearchTimer = null;
+$("globalSearchInput")?.addEventListener("input", () => {
+    clearTimeout(globalSearchTimer);
+    const query = $("globalSearchInput").value.trim();
+    if (query.length < 2) {
+        $("globalSearchPanel").classList.remove("open");
+        $("globalSearchPanel").innerHTML = "";
+        return;
+    }
+    globalSearchTimer = setTimeout(async () => {
+        try {
+            const results = await readJson(await authFetch(`${API_URL}/search?q=${encodeURIComponent(query)}`));
+            const ticketHtml = (results.tickets || []).map((ticket) => `
+                <button type="button" class="global-search-result ticket-result" data-ticket="${escapeHtml(ticket.id)}">
+                    <strong>${escapeHtml(ticket.ticketNumber)} · ${escapeHtml(ticket.title)}</strong>
+                    <span>${escapeHtml(ticket.status)} · ${escapeHtml(ticket.priority)}</span>
+                </button>`).join("");
+            const articleHtml = (results.articles || []).map((article) => `
+                <button type="button" class="global-search-result article-result" data-article="${escapeHtml(article.id)}">
+                    <strong>${escapeHtml(article.title)}</strong>
+                    <span>${escapeHtml(article.summary || "Knowledge article")}</span>
+                </button>`).join("");
+            $("globalSearchPanel").innerHTML = `${ticketHtml}${articleHtml}` || `<div class="empty-state compact-empty">No results.</div>`;
+            $("globalSearchPanel").classList.add("open");
+            $("globalSearchPanel").querySelectorAll("[data-ticket]").forEach((button) => button.addEventListener("click", async () => {
+                $("globalSearchPanel").classList.remove("open");
+                await openTicketDetail(button.dataset.ticket);
+            }));
+            $("globalSearchPanel").querySelectorAll("[data-article]").forEach((button) => button.addEventListener("click", () => {
+                $("globalSearchPanel").classList.remove("open");
+                showView("knowledge");
+                $("knowledgeSearch").value = knowledgeArticles.find((article) => article.id === button.dataset.article)?.title || "";
+                renderKnowledge();
+            }));
+        } catch (error) {
+            console.error("Global search error:", error);
+        }
+    }, 250);
+});
+
+document.addEventListener("click", (event) => {
+    if (!event.target.closest(".topbar-search-wrap")) $("globalSearchPanel")?.classList.remove("open");
+});
 
 async function startApplication() {
     const validSession = await loadCurrentUser();

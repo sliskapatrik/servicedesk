@@ -9,6 +9,7 @@ const multer = require("multer");
 
 const db = require("./database");
 const authRoutes = require("./authRoutes");
+const featureRoutes = require("./featureRoutes");
 
 const {
     authenticateToken,
@@ -88,6 +89,7 @@ app.use(express.json());
 
 app.use("/api/auth", authRoutes);
 app.use("/api", authenticateToken);
+app.use("/api", featureRoutes);
 
 const uploadsDir = path.join(__dirname, "uploads");
 fs.mkdirSync(uploadsDir, { recursive: true });
@@ -897,12 +899,22 @@ app.get("/api/tickets", async function (req, res) {
                 c.company,
                 c.contact_name AS customerName,
                 u.id AS technicianId,
-                u.name AS technician
+                u.name AS technician,
+                t.category_id AS categoryId,
+                tc.name AS categoryName,
+                (
+                    SELECT GROUP_CONCAT(tg.name ORDER BY tg.name SEPARATOR ', ')
+                    FROM ticket_tags tt
+                    INNER JOIN tags tg ON tg.id = tt.tag_id
+                    WHERE tt.ticket_id = t.id
+                ) AS tagNames
             FROM tickets t
             INNER JOIN customers c
                 ON c.id = t.customer_id
             LEFT JOIN users u
                 ON u.id = t.assigned_user_id
+            LEFT JOIN ticket_categories tc
+                ON tc.id = t.category_id
         `;
 
         const params = [];
@@ -955,12 +967,16 @@ app.get("/api/tickets/:id", async function (req, res) {
                 c.phone AS customerPhone,
                 c.user_id AS customerUserId,
                 u.name AS technician,
-                u.email AS technicianEmail
+                u.email AS technicianEmail,
+                t.category_id AS categoryId,
+                tc.name AS categoryName
             FROM tickets t
             INNER JOIN customers c
                 ON c.id = t.customer_id
             LEFT JOIN users u
                 ON u.id = t.assigned_user_id
+            LEFT JOIN ticket_categories tc
+                ON tc.id = t.category_id
             WHERE t.id = ?
             LIMIT 1
             `,
@@ -1069,7 +1085,8 @@ app.post("/api/tickets", async function (req, res) {
             customerId,
             title,
             description,
-            priority
+            priority,
+            categoryId
         } = req.body;
 
         if (!id || !title || !description) {
@@ -1126,9 +1143,10 @@ app.post("/api/tickets", async function (req, res) {
                 description,
                 priority,
                 status,
-                sla_deadline
+                sla_deadline,
+                category_id
             )
-            VALUES (?, ?, ?, ?, ?, 'New', ?)
+            VALUES (?, ?, ?, ?, ?, 'New', ?, ?)
             `,
             [
                 id,
@@ -1136,7 +1154,8 @@ app.post("/api/tickets", async function (req, res) {
                 title,
                 description,
                 finalPriority,
-                automaticSla
+                automaticSla,
+                categoryId || null
             ]
         );
 
@@ -1201,7 +1220,8 @@ app.put("/api/tickets/:id", requireRole("admin", "technician"), async function (
                 assigned_user_id,
                 priority,
                 status,
-                sla_deadline
+                sla_deadline,
+                category_id
             FROM tickets
             WHERE id = ?
             LIMIT 1
@@ -1217,6 +1237,9 @@ app.put("/api/tickets/:id", requireRole("admin", "technician"), async function (
 
         const priority = req.body.priority || current.priority;
         const status = req.body.status || current.status;
+        const categoryId = Object.prototype.hasOwnProperty.call(req.body, "categoryId")
+            ? (req.body.categoryId || null)
+            : current.category_id;
         let slaDeadline = Object.prototype.hasOwnProperty.call(req.body, "slaDeadline")
             ? (req.body.slaDeadline || null)
             : current.sla_deadline;
@@ -1291,7 +1314,8 @@ app.put("/api/tickets/:id", requireRole("admin", "technician"), async function (
                 priority = ?,
                 status = ?,
                 sla_deadline = ?,
-                resolved_at = ?
+                resolved_at = ?,
+                category_id = ?
             WHERE id = ?
             `,
             [
@@ -1300,6 +1324,7 @@ app.put("/api/tickets/:id", requireRole("admin", "technician"), async function (
                 status,
                 slaDeadline,
                 resolvedAt,
+                categoryId,
                 ticketId
             ]
         );

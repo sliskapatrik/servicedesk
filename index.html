@@ -29,6 +29,7 @@
         <nav class="menu">
             <button class="menu-item active" data-view="dashboard">Dashboard</button>
             <button class="menu-item" data-view="tickets">Tickets</button>
+            <button class="menu-item" data-view="knowledge">Knowledge Base</button>
             <button class="menu-item staff-only" data-view="customers">Customers</button>
             <button class="menu-item admin-only" data-view="users">Users</button>
             <button class="menu-item admin-only" data-view="reports">Reports</button>
@@ -40,6 +41,10 @@
             <div>
                 <h1 id="pageTitle">Dashboard</h1>
                 <p id="pageSubtitle">ServiceDesk overview</p>
+            </div>
+            <div class="topbar-search-wrap">
+                <input id="globalSearchInput" class="global-search-input" type="search" placeholder="Search tickets and knowledge...">
+                <div id="globalSearchPanel" class="global-search-panel"></div>
             </div>
             <div class="user-menu">
                 <div class="notification-wrap">
@@ -91,6 +96,11 @@
                     </div>
                     <button class="primary-button" id="addTicketButton">+ New Ticket</button>
                 </div>
+                <div class="saved-filter-toolbar">
+                    <select id="savedFilterSelect"><option value="">Saved filters</option></select>
+                    <button class="secondary-button" id="saveCurrentFilterButton" type="button">Save current filter</button>
+                    <button class="secondary-button" id="deleteSavedFilterButton" type="button">Delete selected</button>
+                </div>
                 <div class="filters">
                     <select id="ticketStatusFilter">
                         <option value="">All statuses</option>
@@ -101,9 +111,27 @@
                         <option value="">All priorities</option>
                         <option>Low</option><option>Medium</option><option>High</option><option>Critical</option>
                     </select>
+                    <select id="ticketCategoryFilter"><option value="">All categories</option></select>
                     <input type="text" id="ticketSearch" placeholder="Search tickets...">
                 </div>
                 <div class="data-list" id="ticketList"></div>
+            </section>
+        </section>
+
+        <section class="view" id="knowledgeView">
+            <section class="panel">
+                <div class="section-header">
+                    <div>
+                        <h2>Knowledge Base</h2>
+                        <p class="section-description">Reusable solutions, FAQ articles and internal troubleshooting notes.</p>
+                    </div>
+                    <button class="primary-button staff-only" id="addKnowledgeButton" type="button">+ New Article</button>
+                </div>
+                <div class="filters knowledge-filters">
+                    <input id="knowledgeSearch" type="search" placeholder="Search knowledge articles...">
+                    <select id="knowledgeCategoryFilter"><option value="">All categories</option></select>
+                </div>
+                <div id="knowledgeList" class="knowledge-list"></div>
             </section>
         </section>
 
@@ -221,8 +249,13 @@
             <input type="text" id="ticketTitle" placeholder="Example: Email service unavailable" required>
             <label for="ticketDescription">Description</label>
             <textarea id="ticketDescription" placeholder="Describe the problem..." required></textarea>
+            <label for="ticketCategory">Category</label>
+            <select id="ticketCategory"><option value="">No category</option></select>
             <label for="ticketPriority">Priority</label>
             <select id="ticketPriority"><option>Low</option><option selected>Medium</option><option>High</option><option>Critical</option></select>
+            <label for="ticketTags">Tags</label>
+            <select id="ticketTags" multiple size="5"></select>
+            <p class="muted form-hint">Hold Ctrl to select multiple tags.</p>
             <div class="form-buttons">
                 <button type="button" class="cancel-button" id="cancelTicketButton">Cancel</button>
                 <button type="submit" class="primary-button">Create Ticket</button>
@@ -342,6 +375,18 @@
 
                 <section class="detail-section">
                     <div class="detail-section-title-row">
+                        <h3>Related Knowledge</h3>
+                        <span class="muted" id="linkedArticleCount"></span>
+                    </div>
+                    <div id="linkedArticleList" class="knowledge-link-list"></div>
+                    <div class="staff-only-detail related-article-controls">
+                        <select id="linkArticleSelect"><option value="">Select article...</option></select>
+                        <button type="button" class="secondary-button" id="linkArticleButton">Link article</button>
+                    </div>
+                </section>
+
+                <section class="detail-section">
+                    <div class="detail-section-title-row">
                         <h3>Attachments</h3>
                         <span class="muted" id="attachmentCount"></span>
                     </div>
@@ -373,6 +418,14 @@
                         <label for="detailPriority">Priority</label>
                         <select id="detailPriority"><option>Low</option><option>Medium</option><option>High</option><option>Critical</option></select>
                     </div>
+                    <div class="detail-field">
+                        <label for="detailCategory">Category</label>
+                        <select id="detailCategory"><option value="">No category</option></select>
+                    </div>
+                    <div class="detail-field">
+                        <label for="detailTags">Tags</label>
+                        <select id="detailTags" multiple size="5"></select>
+                    </div>
                     <div class="detail-field staff-only-detail" id="technicianField">
                         <label for="detailTechnician">Technician</label>
                         <select id="detailTechnician"><option value="">Unassigned</option></select>
@@ -400,6 +453,37 @@
                 </section>
             </aside>
         </div>
+    </div>
+</div>
+
+<div class="modal" id="knowledgeModal">
+    <div class="modal-content">
+        <h2 id="knowledgeModalTitle">New Knowledge Article</h2>
+        <form id="knowledgeForm">
+            <input type="hidden" id="knowledgeEditId">
+            <label for="knowledgeTitle">Title</label>
+            <input id="knowledgeTitle" type="text" required>
+            <label for="knowledgeSummary">Summary</label>
+            <textarea id="knowledgeSummary" rows="3"></textarea>
+            <label for="knowledgeContent">Article content</label>
+            <textarea id="knowledgeContent" rows="10" required></textarea>
+            <label for="knowledgeCategory">Category</label>
+            <select id="knowledgeCategory"><option value="">No category</option></select>
+            <div class="two-column-form">
+                <div>
+                    <label for="knowledgeVisibility">Visibility</label>
+                    <select id="knowledgeVisibility"><option value="public">Public</option><option value="internal">Internal</option></select>
+                </div>
+                <div>
+                    <label for="knowledgeStatus">Status</label>
+                    <select id="knowledgeStatus"><option value="published">Published</option><option value="draft">Draft</option></select>
+                </div>
+            </div>
+            <div class="form-buttons">
+                <button type="button" class="cancel-button" id="cancelKnowledgeButton">Cancel</button>
+                <button type="submit" class="primary-button">Save Article</button>
+            </div>
+        </form>
     </div>
 </div>
 

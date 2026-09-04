@@ -1,0 +1,12 @@
+-- Optional demo content for ServiceDesk v0.6.
+-- Run only after schema.sql and after at least one admin/technician user exists.
+-- Replace YOUR_USER_ID with an existing admin/technician user id before running.
+
+-- Example knowledge article:
+-- INSERT INTO knowledge_articles
+-- (id, title, summary, content, visibility, status, category_id, author_user_id)
+-- VALUES
+-- (UUID(), 'Resetting a Microsoft 365 password',
+--  'Basic steps for a user password reset.',
+--  '1. Verify the user identity.\n2. Reset the password in the admin portal.\n3. Force a new password at next sign-in.\n4. Confirm MFA access.',
+--  'public', 'published', 'cat-access', 'YOUR_USER_ID');
