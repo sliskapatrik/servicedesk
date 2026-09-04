@@ -1,4 +1,4 @@
--- ServiceDesk complete database schema (v0.8)
+-- ServiceDesk complete database schema (v0.9)
 --
 -- CLEAN INSTALL:
 -- Import this file into an EMPTY MySQL/MariaDB database named `servicedesk`.

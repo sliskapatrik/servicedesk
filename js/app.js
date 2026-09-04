@@ -1,4 +1,8 @@
-const API_URL = "http://localhost:3000/api";
+const API_URL =
+    window.location.protocol === "file:" ||
+    ["localhost", "127.0.0.1"].includes(window.location.hostname)
+        ? "http://localhost:3000/api"
+        : "/api";
 
 let authToken = localStorage.getItem("servicedeskToken");
 let loggedUser = null;
@@ -37,12 +41,30 @@ function escapeHtml(value) {
 async function authFetch(url, options = {}) {
     const headers = { ...(options.headers || {}) };
     if (authToken) headers.Authorization = `Bearer ${authToken}`;
-    return fetch(url, { ...options, headers });
+
+    try {
+        const response = await fetch(url, { ...options, headers });
+
+        if (response.status === 401 && authToken) {
+            localStorage.removeItem("servicedeskToken");
+            authToken = null;
+            loggedUser = null;
+            showLogin();
+        }
+
+        return response;
+    } catch (error) {
+        throw new Error("Could not reach the ServiceDesk server. Check that the backend is running.");
+    }
 }
 
 async function readJson(response) {
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || "Request failed");
+    if (!response.ok) {
+        const requestId = response.headers.get("X-Request-Id");
+        const suffix = requestId ? ` (Request ${requestId.slice(0, 8)})` : "";
+        throw new Error((data.error || "Request failed") + suffix);
+    }
     return data;
 }
 
@@ -850,10 +872,15 @@ function populateTechnicianSelect(selectedId) {
 
 function openModal(id) {
     $(id).classList.add("open");
+    document.body.classList.add("modal-open");
 }
 
 function closeModal(id) {
     $(id).classList.remove("open");
+
+    if (!document.querySelector(".modal.open")) {
+        document.body.classList.remove("modal-open");
+    }
 }
 
 function openTicketModal() {
@@ -1557,7 +1584,7 @@ $("deleteTicketButton").addEventListener("click", async function () {
 
 document.querySelectorAll(".modal").forEach((modal) => {
     modal.addEventListener("click", function (event) {
-        if (event.target === modal) modal.classList.remove("open");
+        if (event.target === modal) closeModal(modal.id);
     });
 });
 

@@ -566,10 +566,9 @@ button {
     display: none;
 
     position: fixed;
-
     inset: 0;
 
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
 
     padding: 20px;
@@ -578,6 +577,9 @@ button {
         rgba(0, 0, 0, 0.5);
 
     z-index: 50;
+
+    overflow-y: auto;
+    overscroll-behavior: contain;
 }
 
 .modal.open {
@@ -587,15 +589,24 @@ button {
 .modal-content {
     width:
         min(
-            560px,
+            760px,
             100%
         );
 
+    max-height: calc(100vh - 40px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+
     padding: 28px;
+    margin: auto;
 
     background: white;
 
     border-radius: 14px;
+}
+
+body.modal-open {
+    overflow: hidden;
 }
 
 .modal-content h2 {

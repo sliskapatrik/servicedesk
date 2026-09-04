@@ -101,9 +101,42 @@ async function notifyTicketParticipants(connection, ticketId, actorUserId, type,
 }
 
 app.set("trust proxy", 1);
-app.use(helmet());
-app.use(cors());
-app.use(express.json());
+app.disable("x-powered-by");
+
+app.use(function requestContext(req, res, next) {
+    const requestId = req.headers["x-request-id"] || crypto.randomUUID();
+    req.requestId = String(requestId);
+    res.setHeader("X-Request-Id", req.requestId);
+    next();
+});
+
+app.use(helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
+
+const configuredOrigins = String(process.env.CORS_ORIGINS || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+app.use(cors({
+    origin(origin, callback) {
+        if (!origin || configuredOrigins.length === 0) return callback(null, true);
+        if (configuredOrigins.includes(origin)) return callback(null, true);
+        return callback(new Error("Origin is not allowed by CORS policy"));
+    }
+}));
+
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || "1mb" }));
+
+app.get("/health", async function (req, res) {
+    try {
+        await db.query("SELECT 1");
+        res.json({ status: "ok", database: "connected", timestamp: new Date().toISOString() });
+    } catch (error) {
+        res.status(503).json({ status: "degraded", database: "unavailable", timestamp: new Date().toISOString() });
+    }
+});
 
 app.use("/api/auth", authRoutes);
 app.use("/api", authenticateToken);
@@ -114,18 +147,33 @@ app.use("/api", settingsRoutes);
 const uploadsDir = path.join(__dirname, "uploads");
 fs.mkdirSync(uploadsDir, { recursive: true });
 
+const ALLOWED_UPLOAD_EXTENSIONS = new Set([
+    ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp",
+    ".txt", ".csv", ".doc", ".docx", ".xls", ".xlsx"
+]);
+
+const uploadMaxBytes = Math.max(1, Number(process.env.UPLOAD_MAX_MB || 10)) * 1024 * 1024;
+
 const upload = multer({
     storage: multer.diskStorage({
         destination: function (req, file, cb) {
             cb(null, uploadsDir);
         },
         filename: function (req, file, cb) {
-            const safeExt = path.extname(file.originalname).slice(0, 16);
+            const safeExt = path.extname(file.originalname).toLowerCase().slice(0, 16);
             cb(null, `${crypto.randomUUID()}${safeExt}`);
         }
     }),
     limits: {
-        fileSize: 10 * 1024 * 1024
+        fileSize: uploadMaxBytes,
+        files: 1
+    },
+    fileFilter: function (req, file, cb) {
+        const extension = path.extname(file.originalname).toLowerCase();
+        if (!ALLOWED_UPLOAD_EXTENSIONS.has(extension)) {
+            return cb(new Error("This attachment file type is not allowed"));
+        }
+        cb(null, true);
     }
 });
 
@@ -1117,6 +1165,17 @@ app.post("/api/tickets", async function (req, res) {
             });
         }
 
+        const cleanTitle = String(title).trim();
+        const cleanDescription = String(description).trim();
+
+        if (cleanTitle.length < 3 || cleanTitle.length > 255) {
+            return res.status(400).json({ error: "Ticket title must be between 3 and 255 characters" });
+        }
+
+        if (cleanDescription.length < 5 || cleanDescription.length > 20000) {
+            return res.status(400).json({ error: "Ticket description must be between 5 and 20000 characters" });
+        }
+
         const configuredDefaultPriority = await getAppSetting("default_priority", "Medium");
         if (!TICKET_PRIORITIES.includes(priority || configuredDefaultPriority)) {
             return res.status(400).json({
@@ -1178,8 +1237,8 @@ app.post("/api/tickets", async function (req, res) {
             [
                 id,
                 finalCustomerId,
-                title,
-                description,
+                cleanTitle,
+                cleanDescription,
                 finalPriority,
                 automaticSla,
                 categoryId || null
@@ -1693,16 +1752,50 @@ app.delete(
     }
 );
 
+app.use(function (req, res) {
+    res.status(404).json({
+        error: "Endpoint not found",
+        requestId: req.requestId
+    });
+});
+
 app.use(function (error, req, res, next) {
     if (error instanceof multer.MulterError) {
         if (error.code === "LIMIT_FILE_SIZE") {
-            return res.status(413).json({ error: "File is too large. Maximum size is 10 MB." });
+            return res.status(413).json({ error: `File is too large. Maximum size is ${Number(process.env.UPLOAD_MAX_MB || 10)} MB.` });
         }
         return res.status(400).json({ error: error.message });
     }
-    next(error);
+
+    if (error && error.message === "This attachment file type is not allowed") {
+        return res.status(415).json({ error: error.message });
+    }
+
+    console.error(`[${req.requestId || "no-request-id"}] Unhandled API error:`, error);
+
+    res.status(500).json({
+        error: "Internal server error",
+        requestId: req.requestId
+    });
 });
 
-app.listen(PORT, function () {
+const server = app.listen(PORT, function () {
     console.log(`ServiceDesk API running on http://localhost:${PORT}`);
 });
+
+async function shutdown(signal) {
+    console.log(`${signal} received. Closing ServiceDesk...`);
+
+    server.close(async function () {
+        try {
+            await db.end();
+        } finally {
+            process.exit(0);
+        }
+    });
+
+    setTimeout(() => process.exit(1), 10000).unref();
+}
+
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
