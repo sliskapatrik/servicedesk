@@ -14,6 +14,10 @@ let categories = [];
 let tags = [];
 let knowledgeArticles = [];
 let savedFilters = [];
+let cannedReplies = [];
+let ticketTemplates = [];
+let activeQueue = "all";
+const selectedTicketIds = new Set();
 
 const $ = (id) => document.getElementById(id);
 
@@ -119,12 +123,17 @@ async function showApplication() {
         loadCategories(),
         loadTags(),
         loadKnowledge(),
-        loadSavedFilters()
+        loadSavedFilters(),
+        loadCannedReplies(),
+        loadTicketTemplates()
     ]);
     renderDashboard();
     renderTickets();
     renderCustomers();
     renderUsers();
+    populateBulkTechnicians();
+    populateTicketTemplateSelect();
+    populateCannedReplySelect();
 }
 
 function applyRolePermissions() {
@@ -153,7 +162,8 @@ const views = {
     customers: $("customersView"),
     users: $("usersView"),
     reports: $("reportsView"),
-    knowledge: $("knowledgeView")
+    knowledge: $("knowledgeView"),
+    tools: $("toolsView")
 };
 
 const titles = {
@@ -162,7 +172,8 @@ const titles = {
     customers: ["Customers", "Customer directory"],
     users: ["Users", "ServiceDesk accounts"],
     reports: ["Reports", "Analytics, SLA performance and workload"],
-    knowledge: ["Knowledge Base", "Solutions, FAQ and troubleshooting articles"]
+    knowledge: ["Knowledge Base", "Solutions, FAQ and troubleshooting articles"],
+    tools: ["Productivity", "Templates, canned replies and support workflow tools"]
 };
 
 document.querySelectorAll(".menu-item").forEach((button) => {
@@ -182,6 +193,7 @@ function showView(name) {
     if (name === "users") renderUsers();
     if (name === "reports" && isAdmin()) loadAnalytics();
     if (name === "knowledge") renderKnowledge();
+    if (name === "tools") renderProductivityTools();
 }
 
 async function loadAnalytics() {
@@ -328,6 +340,26 @@ async function exportTicketsCsv() {
         URL.revokeObjectURL(url);
     } catch (error) {
         showToast(`Could not export CSV: ${error.message}`);
+    }
+}
+
+async function loadCannedReplies() {
+    if (!isStaff()) { cannedReplies = []; return; }
+    try {
+        cannedReplies = await readJson(await authFetch(`${API_URL}/canned-replies`));
+    } catch (error) {
+        console.error("Canned replies API error:", error);
+        cannedReplies = [];
+    }
+}
+
+async function loadTicketTemplates() {
+    if (!isStaff()) { ticketTemplates = []; return; }
+    try {
+        ticketTemplates = await readJson(await authFetch(`${API_URL}/ticket-templates`));
+    } catch (error) {
+        console.error("Ticket templates API error:", error);
+        ticketTemplates = [];
     }
 }
 
@@ -618,10 +650,15 @@ function renderTickets() {
 
     const filtered = tickets.filter((ticket) => {
         const customerText = `${ticket.company || ""} ${ticket.customerName || ""}`.toLowerCase();
-        return (!status || ticket.status === status) &&
+        const baseMatch = (!status || ticket.status === status) &&
             (!priority || ticket.priority === priority) &&
             (!category || ticket.categoryId === category) &&
             (!search || ticket.title.toLowerCase().includes(search) || (ticket.ticketNumber || "").toLowerCase().includes(search) || customerText.includes(search));
+        if (!baseMatch) return false;
+        if (activeQueue === "mine") return ticket.technicianId === loggedUser.id && !["Resolved", "Closed"].includes(ticket.status);
+        if (activeQueue === "unassigned") return !ticket.technicianId && !["Resolved", "Closed"].includes(ticket.status);
+        if (activeQueue === "overdue") return isTicketOverdue(ticket);
+        return true;
     });
 
     renderTicketCards($("ticketList"), filtered);
@@ -630,36 +667,47 @@ function renderTickets() {
 function renderTicketCards(container, items) {
     if (!items.length) {
         container.innerHTML = `<div class="empty-state">No tickets found.</div>`;
+        updateBulkSelectedCount();
         return;
     }
 
     container.innerHTML = items.map((ticket) => `
-        <button class="ticket-card ticket-card-button" type="button" data-id="${escapeHtml(ticket.id)}">
-            <div class="ticket-card-content">
-                <div class="ticket-card-title-row">
-                    <h3><span class="ticket-number">${escapeHtml(ticket.ticketNumber || "Ticket")}</span> ${escapeHtml(ticket.title)}</h3>
-                    ${isTicketOverdue(ticket) ? `<span class="badge sla-overdue">SLA overdue</span>` : ""}
+        <div class="ticket-row-wrap">
+            ${isStaff() ? `<label class="ticket-select-wrap" title="Select ticket"><input class="ticket-select-checkbox" type="checkbox" data-id="${escapeHtml(ticket.id)}" ${selectedTicketIds.has(ticket.id) ? "checked" : ""}></label>` : ""}
+            <button class="ticket-card ticket-card-button" type="button" data-id="${escapeHtml(ticket.id)}">
+                <div class="ticket-card-content">
+                    <div class="ticket-card-title-row">
+                        <h3><span class="ticket-number">${escapeHtml(ticket.ticketNumber || "Ticket")}</span> ${escapeHtml(ticket.title)}</h3>
+                        ${isTicketOverdue(ticket) ? `<span class="badge sla-overdue">SLA overdue</span>` : ""}
+                    </div>
+                    <p>${escapeHtml(ticket.description)}</p>
+                    <div class="card-meta">
+                        <span>${escapeHtml(ticket.company || ticket.customerName || "Unknown customer")}</span>
+                        <span>Technician: ${escapeHtml(ticket.technician || "Unassigned")}</span>
+                        ${ticket.categoryName ? `<span>Category: ${escapeHtml(ticket.categoryName)}</span>` : ""}
+                        ${ticket.tagNames ? `<span>Tags: ${escapeHtml(ticket.tagNames)}</span>` : ""}
+                        <span>Created: ${escapeHtml(ticket.createdAt || "—")}</span>
+                        ${ticket.slaDeadline ? `<span>SLA: ${escapeHtml(ticket.slaDeadline)}</span>` : ""}
+                    </div>
                 </div>
-                <p>${escapeHtml(ticket.description)}</p>
-                <div class="card-meta">
-                    <span>${escapeHtml(ticket.company || ticket.customerName || "Unknown customer")}</span>
-                    <span>Technician: ${escapeHtml(ticket.technician || "Unassigned")}</span>
-                    ${ticket.categoryName ? `<span>Category: ${escapeHtml(ticket.categoryName)}</span>` : ""}
-                    ${ticket.tagNames ? `<span>Tags: ${escapeHtml(ticket.tagNames)}</span>` : ""}
-                    <span>Created: ${escapeHtml(ticket.createdAt || "—")}</span>
-                    ${ticket.slaDeadline ? `<span>SLA: ${escapeHtml(ticket.slaDeadline)}</span>` : ""}
+                <div class="card-actions">
+                    <span class="badge ${priorityClass(ticket.priority)}">${escapeHtml(ticket.priority)}</span>
+                    <span class="badge ${statusClass(ticket.status)}">${escapeHtml(ticket.status)}</span>
                 </div>
-            </div>
-            <div class="card-actions">
-                <span class="badge ${priorityClass(ticket.priority)}">${escapeHtml(ticket.priority)}</span>
-                <span class="badge ${statusClass(ticket.status)}">${escapeHtml(ticket.status)}</span>
-            </div>
-        </button>
+            </button>
+        </div>
     `).join("");
 
     container.querySelectorAll(".ticket-card-button").forEach((card) => {
         card.addEventListener("click", () => openTicketDetail(card.dataset.id));
     });
+    container.querySelectorAll(".ticket-select-checkbox").forEach((checkbox) => {
+        checkbox.addEventListener("change", () => {
+            checkbox.checked ? selectedTicketIds.add(checkbox.dataset.id) : selectedTicketIds.delete(checkbox.dataset.id);
+            updateBulkSelectedCount();
+        });
+    });
+    updateBulkSelectedCount();
 }
 
 $("ticketStatusFilter").addEventListener("change", renderTickets);
@@ -705,6 +753,7 @@ function openTicketModal() {
     if (loggedUser.role !== "customer") populateTicketCustomerSelect();
     populateCategorySelect("ticketCategory");
     populateTagSelect("ticketTags");
+    populateTicketTemplateSelect();
     openModal("ticketModal");
 }
 
@@ -743,6 +792,176 @@ $("ticketForm").addEventListener("submit", async function (event) {
     } catch (error) {
         showToast(`Could not create ticket: ${error.message}`);
     }
+});
+
+function populateTicketTemplateSelect() {
+    const select = $("ticketTemplate");
+    if (!select) return;
+    select.innerHTML = `<option value="">No template</option>` + ticketTemplates.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join("");
+}
+
+$("ticketTemplate")?.addEventListener("change", function () {
+    const template = ticketTemplates.find((item) => item.id === this.value);
+    if (!template) return;
+    $("ticketTitle").value = template.title || "";
+    $("ticketDescription").value = template.description || "";
+    $("ticketPriority").value = template.priority || "Medium";
+    $("ticketCategory").value = template.categoryId || "";
+    const tagIds = new Set(template.tagIds || []);
+    Array.from($("ticketTags").options).forEach((option) => option.selected = tagIds.has(option.value));
+});
+
+function populateBulkTechnicians() {
+    const select = $("bulkTechnician");
+    if (!select) return;
+    select.innerHTML = `<option value="__unchanged__">Technician unchanged</option><option value="">Unassigned</option>` + technicians.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join("");
+}
+
+function updateBulkSelectedCount() {
+    const count = $("bulkSelectedCount");
+    if (count) count.textContent = `${selectedTicketIds.size} selected`;
+}
+
+function visibleTicketIds() {
+    return Array.from(document.querySelectorAll("#ticketList .ticket-select-checkbox")).map((item) => item.dataset.id);
+}
+
+$("bulkSelectAll")?.addEventListener("change", function () {
+    visibleTicketIds().forEach((id) => this.checked ? selectedTicketIds.add(id) : selectedTicketIds.delete(id));
+    renderTickets();
+});
+
+$("applyBulkButton")?.addEventListener("click", async function () {
+    if (!selectedTicketIds.size) return showToast("Select at least one ticket.");
+    const body = { ticketIds: Array.from(selectedTicketIds) };
+    if ($("bulkStatus").value) body.status = $("bulkStatus").value;
+    if ($("bulkPriority").value) body.priority = $("bulkPriority").value;
+    if ($("bulkTechnician").value !== "__unchanged__") body.assignedUserId = $("bulkTechnician").value || null;
+    if (!body.status && !body.priority && !("assignedUserId" in body)) return showToast("Choose a status, priority or technician change.");
+    try {
+        const result = await readJson(await authFetch(`${API_URL}/tickets/bulk-update`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }));
+        selectedTicketIds.clear();
+        $("bulkSelectAll").checked = false;
+        await loadTickets();
+        renderTickets();
+        renderDashboard();
+        showToast(`${result.updated} ticket(s) updated.`);
+    } catch (error) { showToast(`Bulk update failed: ${error.message}`); }
+});
+
+document.querySelectorAll(".queue-chip").forEach((button) => button.addEventListener("click", () => {
+    activeQueue = button.dataset.queue;
+    document.querySelectorAll(".queue-chip").forEach((item) => item.classList.toggle("active", item === button));
+    renderTickets();
+}));
+
+function renderProductivityTools() {
+    if (!isStaff()) return;
+    const replies = $("cannedReplyList");
+    const templates = $("templateList");
+    replies.innerHTML = cannedReplies.length ? cannedReplies.map((item) => `
+        <div class="productivity-item"><div><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.body)}</p><small class="muted">Created by ${escapeHtml(item.createdByName || "Unknown")}</small></div>
+        <div class="card-actions"><button class="secondary-button edit-reply" data-id="${escapeHtml(item.id)}" type="button">Edit</button><button class="danger-small-button delete-reply" data-id="${escapeHtml(item.id)}" type="button">Delete</button></div></div>`).join("") : `<div class="empty-state">No canned replies yet.</div>`;
+    templates.innerHTML = ticketTemplates.length ? ticketTemplates.map((item) => `
+        <div class="productivity-item"><div><h3>${escapeHtml(item.name)}</h3><p>${escapeHtml(item.title)} · ${escapeHtml(item.priority)}</p><small class="muted">Created by ${escapeHtml(item.createdByName || "Unknown")}</small></div>
+        <div class="card-actions"><button class="secondary-button edit-template" data-id="${escapeHtml(item.id)}" type="button">Edit</button><button class="danger-small-button delete-template" data-id="${escapeHtml(item.id)}" type="button">Delete</button></div></div>`).join("") : `<div class="empty-state">No ticket templates yet.</div>`;
+    replies.querySelectorAll(".edit-reply").forEach((b) => b.addEventListener("click", () => openCannedReplyModal(b.dataset.id)));
+    replies.querySelectorAll(".delete-reply").forEach((b) => b.addEventListener("click", () => deleteCannedReply(b.dataset.id)));
+    templates.querySelectorAll(".edit-template").forEach((b) => b.addEventListener("click", () => openTemplateModal(b.dataset.id)));
+    templates.querySelectorAll(".delete-template").forEach((b) => b.addEventListener("click", () => deleteTicketTemplate(b.dataset.id)));
+}
+
+function openCannedReplyModal(id = "") {
+    $("cannedReplyForm").reset();
+    $("cannedReplyEditId").value = id;
+    const item = cannedReplies.find((entry) => entry.id === id);
+    $("cannedReplyModalTitle").textContent = item ? "Edit Canned Reply" : "New Canned Reply";
+    if (item) { $("cannedReplyTitle").value = item.title; $("cannedReplyBody").value = item.body; }
+    openModal("cannedReplyModal");
+}
+
+function openTemplateModal(id = "") {
+    $("templateForm").reset();
+    $("templateEditId").value = id;
+    populateCategorySelect("templateCategory");
+    populateTagSelect("templateTags");
+    const item = ticketTemplates.find((entry) => entry.id === id);
+    $("templateModalTitle").textContent = item ? "Edit Ticket Template" : "New Ticket Template";
+    if (item) {
+        $("templateName").value = item.name || ""; $("templateTitle").value = item.title || ""; $("templateDescription").value = item.description || "";
+        $("templatePriority").value = item.priority || "Medium"; $("templateCategory").value = item.categoryId || "";
+        const ids = new Set(item.tagIds || []); Array.from($("templateTags").options).forEach((o) => o.selected = ids.has(o.value));
+    }
+    openModal("templateModal");
+}
+
+$("addCannedReplyButton")?.addEventListener("click", () => openCannedReplyModal());
+$("addTemplateButton")?.addEventListener("click", () => openTemplateModal());
+$("cancelCannedReplyButton")?.addEventListener("click", () => closeModal("cannedReplyModal"));
+$("cancelTemplateButton")?.addEventListener("click", () => closeModal("templateModal"));
+
+$("cannedReplyForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const id = $("cannedReplyEditId").value;
+    try {
+        await readJson(await authFetch(`${API_URL}/canned-replies${id ? `/${id}` : ""}`, { method: id ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: $("cannedReplyTitle").value.trim(), body: $("cannedReplyBody").value.trim() }) }));
+        closeModal("cannedReplyModal"); await loadCannedReplies(); renderProductivityTools(); populateCannedReplySelect();
+    } catch (error) { showToast(`Could not save canned reply: ${error.message}`); }
+});
+
+$("templateForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const id = $("templateEditId").value;
+    try {
+        await readJson(await authFetch(`${API_URL}/ticket-templates${id ? `/${id}` : ""}`, { method: id ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+            name: $("templateName").value.trim(), title: $("templateTitle").value.trim(), description: $("templateDescription").value.trim(), priority: $("templatePriority").value,
+            categoryId: $("templateCategory").value || null, tagIds: Array.from($("templateTags").selectedOptions).map((o) => o.value)
+        }) }));
+        closeModal("templateModal"); await loadTicketTemplates(); renderProductivityTools(); populateTicketTemplateSelect();
+    } catch (error) { showToast(`Could not save template: ${error.message}`); }
+});
+
+async function deleteCannedReply(id) {
+    if (!confirm("Delete this canned reply?")) return;
+    try { await readJson(await authFetch(`${API_URL}/canned-replies/${id}`, { method: "DELETE" })); await loadCannedReplies(); renderProductivityTools(); } catch (error) { showToast(error.message); }
+}
+async function deleteTicketTemplate(id) {
+    if (!confirm("Delete this ticket template?")) return;
+    try { await readJson(await authFetch(`${API_URL}/ticket-templates/${id}`, { method: "DELETE" })); await loadTicketTemplates(); renderProductivityTools(); } catch (error) { showToast(error.message); }
+}
+
+function populateCannedReplySelect() {
+    const select = $("cannedReplySelect");
+    if (!select) return;
+    select.innerHTML = `<option value="">Insert canned reply...</option>` + cannedReplies.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.title)}</option>`).join("");
+}
+
+$("cannedReplySelect")?.addEventListener("change", function () {
+    const item = cannedReplies.find((entry) => entry.id === this.value);
+    if (!item) return;
+    const textarea = $("commentMessage");
+    textarea.value = textarea.value ? `${textarea.value}\n\n${item.body}` : item.body;
+    textarea.focus();
+    this.value = "";
+});
+
+async function refreshWatcherState() {
+    if (!currentTicketDetail) return;
+    try {
+        const data = await readJson(await authFetch(`${API_URL}/tickets/${currentTicketDetail.ticket.id}/watchers`));
+        const button = $("watchTicketButton");
+        button.dataset.watching = data.watching ? "1" : "0";
+        button.textContent = data.watching ? `Watching (${data.watchers.length})` : `Watch ticket (${data.watchers.length})`;
+    } catch (error) { console.error("Watcher state error:", error); }
+}
+
+$("watchTicketButton")?.addEventListener("click", async function () {
+    if (!currentTicketDetail) return;
+    const watching = this.dataset.watching === "1";
+    try {
+        await readJson(await authFetch(`${API_URL}/tickets/${currentTicketDetail.ticket.id}/watchers/self`, { method: watching ? "DELETE" : "POST" }));
+        await refreshWatcherState();
+    } catch (error) { showToast(`Could not update watcher: ${error.message}`); }
 });
 
 function populateCustomerUserSelect(selectedUserId = "", currentCustomerId = "") {
@@ -986,6 +1205,8 @@ function renderTicketDetail() {
     renderHistory(history);
     renderLinkedArticles(linkedArticles);
     renderSlaState(ticket);
+    populateCannedReplySelect();
+    refreshWatcherState();
 }
 
 function renderComments(comments) {

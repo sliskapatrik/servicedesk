@@ -10,3 +10,6 @@
 --  'Basic steps for a user password reset.',
 --  '1. Verify the user identity.\n2. Reset the password in the admin portal.\n3. Force a new password at next sign-in.\n4. Confirm MFA access.',
 --  'public', 'published', 'cat-access', 'YOUR_USER_ID');
+
+-- Optional productivity examples (v0.7)
+-- Canned replies and ticket templates are normally created from the ServiceDesk UI.

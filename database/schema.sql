@@ -1,5 +1,13 @@
--- ServiceDesk complete database schema (v0.6)
--- Import this into an empty MySQL/MariaDB database named `servicedesk`.
+-- ServiceDesk complete database schema (v0.7)
+--
+-- CLEAN INSTALL:
+-- Import this file into an EMPTY MySQL/MariaDB database named `servicedesk`.
+--
+-- IMPORTANT:
+-- This file is the complete current schema and is intended for fresh installations.
+-- CREATE TABLE IF NOT EXISTS does NOT add new columns to existing tables.
+-- When upgrading an existing ServiceDesk database, apply the manual release SQL
+-- documented for that version before starting the updated application.
 
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
@@ -176,5 +184,45 @@ INSERT IGNORE INTO tags (id, name) VALUES
 ('tag-outage', 'Outage'),
 ('tag-onboarding', 'Onboarding'),
 ('tag-hardware', 'Hardware');
+
+
+CREATE TABLE IF NOT EXISTS canned_replies (
+    id VARCHAR(64) PRIMARY KEY,
+    title VARCHAR(160) NOT NULL,
+    body TEXT NOT NULL,
+    created_by VARCHAR(64) NULL,
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_canned_replies_active_title (is_active, title),
+    CONSTRAINT fk_canned_replies_user FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ticket_templates (
+    id VARCHAR(64) PRIMARY KEY,
+    name VARCHAR(160) NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    description TEXT NOT NULL,
+    priority ENUM('Low','Medium','High','Critical') NOT NULL DEFAULT 'Medium',
+    category_id VARCHAR(64) NULL,
+    tag_ids_json TEXT NULL,
+    created_by VARCHAR(64) NULL,
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_ticket_templates_active_name (is_active, name),
+    CONSTRAINT fk_ticket_templates_category FOREIGN KEY (category_id) REFERENCES ticket_categories(id) ON DELETE SET NULL,
+    CONSTRAINT fk_ticket_templates_user FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS ticket_watchers (
+    ticket_id VARCHAR(64) NOT NULL,
+    user_id VARCHAR(64) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (ticket_id, user_id),
+    KEY idx_ticket_watchers_user (user_id),
+    CONSTRAINT fk_ticket_watchers_ticket FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE,
+    CONSTRAINT fk_ticket_watchers_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;

@@ -10,6 +10,7 @@ const multer = require("multer");
 const db = require("./database");
 const authRoutes = require("./authRoutes");
 const featureRoutes = require("./featureRoutes");
+const workflowRoutes = require("./workflowRoutes");
 
 const {
     authenticateToken,
@@ -71,6 +72,9 @@ async function notifyTicketParticipants(connection, ticketId, actorUserId, type,
     if (rows[0]?.technicianId) recipients.add(rows[0].technicianId);
     if (rows[0]?.customerUserId) recipients.add(rows[0].customerUserId);
 
+    const [watchers] = await connection.query(`SELECT user_id AS id FROM ticket_watchers WHERE ticket_id = ?`, [ticketId]);
+    watchers.forEach((row) => recipients.add(row.id));
+
     if (includeAdmins) {
         const [admins] = await connection.query(`SELECT id FROM users WHERE role = 'admin' AND status = 'active'`);
         admins.forEach((row) => recipients.add(row.id));
@@ -90,6 +94,7 @@ app.use(express.json());
 app.use("/api/auth", authRoutes);
 app.use("/api", authenticateToken);
 app.use("/api", featureRoutes);
+app.use("/api", workflowRoutes);
 
 const uploadsDir = path.join(__dirname, "uploads");
 fs.mkdirSync(uploadsDir, { recursive: true });

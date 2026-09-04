@@ -30,6 +30,7 @@
             <button class="menu-item active" data-view="dashboard">Dashboard</button>
             <button class="menu-item" data-view="tickets">Tickets</button>
             <button class="menu-item" data-view="knowledge">Knowledge Base</button>
+            <button class="menu-item staff-only" data-view="tools">Productivity</button>
             <button class="menu-item staff-only" data-view="customers">Customers</button>
             <button class="menu-item admin-only" data-view="users">Users</button>
             <button class="menu-item admin-only" data-view="reports">Reports</button>
@@ -96,6 +97,20 @@
                     </div>
                     <button class="primary-button" id="addTicketButton">+ New Ticket</button>
                 </div>
+                <div class="queue-toolbar">
+                    <button class="queue-chip active" type="button" data-queue="all">All</button>
+                    <button class="queue-chip staff-only" type="button" data-queue="mine">My active</button>
+                    <button class="queue-chip staff-only" type="button" data-queue="unassigned">Unassigned</button>
+                    <button class="queue-chip" type="button" data-queue="overdue">SLA overdue</button>
+                </div>
+                <div class="bulk-toolbar staff-only" id="bulkToolbar">
+                    <label><input id="bulkSelectAll" type="checkbox"> Select visible</label>
+                    <span id="bulkSelectedCount">0 selected</span>
+                    <select id="bulkStatus"><option value="">Status...</option><option>New</option><option>Open</option><option>In Progress</option><option>Waiting for Customer</option><option>Resolved</option><option>Closed</option></select>
+                    <select id="bulkPriority"><option value="">Priority...</option><option>Low</option><option>Medium</option><option>High</option><option>Critical</option></select>
+                    <select id="bulkTechnician"><option value="__unchanged__">Technician unchanged</option><option value="">Unassigned</option></select>
+                    <button class="secondary-button" id="applyBulkButton" type="button">Apply to selected</button>
+                </div>
                 <div class="saved-filter-toolbar">
                     <select id="savedFilterSelect"><option value="">Saved filters</option></select>
                     <button class="secondary-button" id="saveCurrentFilterButton" type="button">Save current filter</button>
@@ -133,6 +148,25 @@
                 </div>
                 <div id="knowledgeList" class="knowledge-list"></div>
             </section>
+        </section>
+
+        <section class="view" id="toolsView">
+            <div class="productivity-grid">
+                <section class="panel">
+                    <div class="section-header">
+                        <div><h2>Canned Replies</h2><p class="section-description">Reusable responses for common support conversations.</p></div>
+                        <button class="primary-button" id="addCannedReplyButton" type="button">+ New Reply</button>
+                    </div>
+                    <div id="cannedReplyList" class="data-list"></div>
+                </section>
+                <section class="panel">
+                    <div class="section-header">
+                        <div><h2>Ticket Templates</h2><p class="section-description">Prefill recurring incidents and requests.</p></div>
+                        <button class="primary-button" id="addTemplateButton" type="button">+ New Template</button>
+                    </div>
+                    <div id="templateList" class="data-list"></div>
+                </section>
+            </div>
         </section>
 
         <section class="view" id="customersView">
@@ -243,6 +277,11 @@
     <div class="modal-content">
         <h2>New Ticket</h2>
         <form id="ticketForm">
+            <div class="staff-only" id="ticketTemplateWrap">
+                <label for="ticketTemplate">Template</label>
+                <select id="ticketTemplate"><option value="">No template</option></select>
+                <p class="muted form-hint">Templates prefill the ticket and can still be edited before creation.</p>
+            </div>
             <label for="ticketCustomer" id="ticketCustomerLabel">Customer</label>
             <select id="ticketCustomer" required><option value="">Select customer</option></select>
             <label for="ticketTitle">Title</label>
@@ -345,7 +384,10 @@
                 <h2 id="detailTitle">Ticket detail</h2>
                 <p id="detailCustomer" class="section-description"></p>
             </div>
-            <button type="button" class="close-icon-button" id="closeTicketDetailButton">×</button>
+            <div class="ticket-detail-header-actions">
+                <button type="button" class="secondary-button" id="watchTicketButton">Watch ticket</button>
+                <button type="button" class="close-icon-button" id="closeTicketDetailButton">×</button>
+            </div>
         </div>
 
         <div class="ticket-detail-grid">
@@ -362,6 +404,9 @@
                     </div>
                     <div class="comment-list" id="commentList"></div>
                     <form id="commentForm" class="comment-form">
+                        <select id="cannedReplySelect" class="staff-only-detail">
+                            <option value="">Insert canned reply...</option>
+                        </select>
                         <textarea id="commentMessage" placeholder="Write a reply..." required></textarea>
                         <div class="comment-actions">
                             <label class="internal-note-toggle staff-only-detail" id="internalNoteWrapper">
@@ -483,6 +528,42 @@
                 <button type="button" class="cancel-button" id="cancelKnowledgeButton">Cancel</button>
                 <button type="submit" class="primary-button">Save Article</button>
             </div>
+        </form>
+    </div>
+</div>
+
+<div class="modal" id="cannedReplyModal">
+    <div class="modal-content">
+        <h2 id="cannedReplyModalTitle">New Canned Reply</h2>
+        <form id="cannedReplyForm">
+            <input type="hidden" id="cannedReplyEditId">
+            <label for="cannedReplyTitle">Title</label>
+            <input id="cannedReplyTitle" type="text" required placeholder="Example: Password reset instructions">
+            <label for="cannedReplyBody">Reply text</label>
+            <textarea id="cannedReplyBody" required placeholder="Write the reusable response..."></textarea>
+            <div class="form-buttons"><button type="button" class="cancel-button" id="cancelCannedReplyButton">Cancel</button><button type="submit" class="primary-button">Save Reply</button></div>
+        </form>
+    </div>
+</div>
+
+<div class="modal" id="templateModal">
+    <div class="modal-content">
+        <h2 id="templateModalTitle">New Ticket Template</h2>
+        <form id="templateForm">
+            <input type="hidden" id="templateEditId">
+            <label for="templateName">Template name</label>
+            <input id="templateName" type="text" required placeholder="Example: New employee onboarding">
+            <label for="templateTitle">Ticket title</label>
+            <input id="templateTitle" type="text" required>
+            <label for="templateDescription">Description</label>
+            <textarea id="templateDescription" required></textarea>
+            <label for="templateCategory">Category</label>
+            <select id="templateCategory"><option value="">No category</option></select>
+            <label for="templatePriority">Priority</label>
+            <select id="templatePriority"><option>Low</option><option selected>Medium</option><option>High</option><option>Critical</option></select>
+            <label for="templateTags">Tags</label>
+            <select id="templateTags" multiple size="5"></select>
+            <div class="form-buttons"><button type="button" class="cancel-button" id="cancelTemplateButton">Cancel</button><button type="submit" class="primary-button">Save Template</button></div>
         </form>
     </div>
 </div>
