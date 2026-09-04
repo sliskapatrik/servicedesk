@@ -34,6 +34,53 @@ const TICKET_PRIORITIES = [
     "Critical"
 ];
 
+const SLA_HOURS = {
+    Low: 72,
+    Medium: 24,
+    High: 8,
+    Critical: 2
+};
+
+function calculateSlaDeadline(priority, baseDate = new Date()) {
+    const hours = SLA_HOURS[priority] || SLA_HOURS.Medium;
+    return new Date(baseDate.getTime() + hours * 60 * 60 * 1000);
+}
+
+async function createNotification(connection, userId, ticketId, type, message) {
+    if (!userId) return;
+    await connection.query(
+        `INSERT INTO notifications (id, user_id, ticket_id, type, message) VALUES (?, ?, ?, ?, ?)`,
+        [crypto.randomUUID(), userId, ticketId || null, type, message]
+    );
+}
+
+async function notifyTicketParticipants(connection, ticketId, actorUserId, type, message, includeAdmins = false) {
+    const [rows] = await connection.query(
+        `
+        SELECT t.assigned_user_id AS technicianId, c.user_id AS customerUserId
+        FROM tickets t
+        INNER JOIN customers c ON c.id = t.customer_id
+        WHERE t.id = ?
+        LIMIT 1
+        `,
+        [ticketId]
+    );
+
+    const recipients = new Set();
+    if (rows[0]?.technicianId) recipients.add(rows[0].technicianId);
+    if (rows[0]?.customerUserId) recipients.add(rows[0].customerUserId);
+
+    if (includeAdmins) {
+        const [admins] = await connection.query(`SELECT id FROM users WHERE role = 'admin' AND status = 'active'`);
+        admins.forEach((row) => recipients.add(row.id));
+    }
+
+    recipients.delete(actorUserId);
+    for (const userId of recipients) {
+        await createNotification(connection, userId, ticketId, type, message);
+    }
+}
+
 app.set("trust proxy", 1);
 app.use(helmet());
 app.use(cors());
@@ -137,6 +184,61 @@ async function addHistory(
         ]
     );
 }
+
+/* =========================================================
+   NOTIFICATIONS
+========================================================= */
+
+app.get("/api/notifications", async function (req, res) {
+    try {
+        const [rows] = await db.query(
+            `
+            SELECT
+                n.id,
+                n.ticket_id AS ticketId,
+                n.type,
+                n.message,
+                n.is_read AS isRead,
+                DATE_FORMAT(n.created_at, '%Y-%m-%d %H:%i:%s') AS createdAt,
+                CASE WHEN t.ticket_no IS NULL THEN NULL ELSE CONCAT('SD-', LPAD(t.ticket_no, 6, '0')) END AS ticketNumber
+            FROM notifications n
+            LEFT JOIN tickets t ON t.id = n.ticket_id
+            WHERE n.user_id = ?
+            ORDER BY n.created_at DESC
+            LIMIT 50
+            `,
+            [req.user.id]
+        );
+        res.json(rows);
+    } catch (error) {
+        console.error("GET notifications error:", error);
+        res.status(500).json({ error: "Failed to load notifications" });
+    }
+});
+
+app.put("/api/notifications/:id/read", async function (req, res) {
+    try {
+        const [result] = await db.query(
+            `UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?`,
+            [req.params.id, req.user.id]
+        );
+        if (!result.affectedRows) return res.status(404).json({ error: "Notification not found" });
+        res.json({ success: true });
+    } catch (error) {
+        console.error("READ notification error:", error);
+        res.status(500).json({ error: "Failed to update notification" });
+    }
+});
+
+app.put("/api/notifications/read-all", async function (req, res) {
+    try {
+        await db.query(`UPDATE notifications SET is_read = 1 WHERE user_id = ?`, [req.user.id]);
+        res.json({ success: true });
+    } catch (error) {
+        console.error("READ ALL notifications error:", error);
+        res.status(500).json({ error: "Failed to update notifications" });
+    }
+});
 
 /* =========================================================
    USERS
@@ -548,6 +650,7 @@ app.get("/api/tickets", async function (req, res) {
         let sql = `
             SELECT
                 t.id,
+                CONCAT('SD-', LPAD(t.ticket_no, 6, '0')) AS ticketNumber,
                 t.title,
                 t.description,
                 t.priority,
@@ -601,6 +704,7 @@ app.get("/api/tickets/:id", async function (req, res) {
             `
             SELECT
                 t.id,
+                CONCAT('SD-', LPAD(t.ticket_no, 6, '0')) AS ticketNumber,
                 t.customer_id AS customerId,
                 t.assigned_user_id AS technicianId,
                 t.title,
@@ -776,6 +880,9 @@ app.post("/api/tickets", async function (req, res) {
 
         await connection.beginTransaction();
 
+        const finalPriority = priority || "Medium";
+        const automaticSla = calculateSlaDeadline(finalPriority);
+
         await connection.query(
             `
             INSERT INTO tickets (
@@ -784,16 +891,18 @@ app.post("/api/tickets", async function (req, res) {
                 title,
                 description,
                 priority,
-                status
+                status,
+                sla_deadline
             )
-            VALUES (?, ?, ?, ?, ?, 'New')
+            VALUES (?, ?, ?, ?, ?, 'New', ?)
             `,
             [
                 id,
                 finalCustomerId,
                 title,
                 description,
-                priority || "Medium"
+                finalPriority,
+                automaticSla
             ]
         );
 
@@ -803,7 +912,16 @@ app.post("/api/tickets", async function (req, res) {
             req.user.id,
             "Ticket created",
             null,
-            "New"
+            `New · SLA ${finalPriority}: ${SLA_HOURS[finalPriority]}h`
+        );
+
+        await notifyTicketParticipants(
+            connection,
+            id,
+            req.user.id,
+            "ticket_created",
+            `New ${finalPriority.toLowerCase()} priority ticket was created.`,
+            true
         );
 
         await connection.commit();
@@ -865,9 +983,13 @@ app.put("/api/tickets/:id", requireRole("admin", "technician"), async function (
 
         const priority = req.body.priority || current.priority;
         const status = req.body.status || current.status;
-        const slaDeadline = Object.prototype.hasOwnProperty.call(req.body, "slaDeadline")
+        let slaDeadline = Object.prototype.hasOwnProperty.call(req.body, "slaDeadline")
             ? (req.body.slaDeadline || null)
             : current.sla_deadline;
+
+        if (req.body.applySlaRule === true) {
+            slaDeadline = calculateSlaDeadline(priority);
+        }
 
         if (!TICKET_PRIORITIES.includes(priority)) {
             return res.status(400).json({
@@ -1000,6 +1122,36 @@ app.put("/api/tickets/:id", requireRole("admin", "technician"), async function (
             );
         }
 
+        if ((current.assigned_user_id || null) !== (assignedUserId || null) && assignedUserId) {
+            await createNotification(
+                connection,
+                assignedUserId,
+                ticketId,
+                "assignment",
+                "A ticket was assigned to you."
+            );
+        }
+
+        if (current.status !== status) {
+            await notifyTicketParticipants(
+                connection,
+                ticketId,
+                req.user.id,
+                "status_changed",
+                `Ticket status changed from ${current.status} to ${status}.`
+            );
+        }
+
+        if (current.priority !== priority) {
+            await notifyTicketParticipants(
+                connection,
+                ticketId,
+                req.user.id,
+                "priority_changed",
+                `Ticket priority changed from ${current.priority} to ${priority}.`
+            );
+        }
+
         await connection.commit();
 
         res.json({
@@ -1079,6 +1231,16 @@ app.post("/api/tickets/:id/comments", async function (req, res) {
             null,
             null
         );
+
+        if (!finalIsInternal) {
+            await notifyTicketParticipants(
+                connection,
+                ticketId,
+                req.user.id,
+                "comment",
+                "A new reply was added to a ticket."
+            );
+        }
 
         await connection.commit();
 

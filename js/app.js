@@ -8,6 +8,7 @@ let technicians = [];
 let currentTicketDetail = null;
 let users = [];
 let customerUsers = [];
+let notifications = [];
 
 const $ = (id) => document.getElementById(id);
 
@@ -108,7 +109,8 @@ async function showApplication() {
         loadTechnicians(),
         loadTickets(),
         loadCustomerUsers(),
-        loadUsers()
+        loadUsers(),
+        loadNotifications()
     ]);
     renderDashboard();
     renderTickets();
@@ -228,17 +230,107 @@ async function loadTickets() {
     }
 }
 
+async function loadNotifications() {
+    try {
+        notifications = await readJson(await authFetch(`${API_URL}/notifications`));
+    } catch (error) {
+        console.error("Notifications API error:", error);
+        notifications = [];
+    }
+    renderNotifications();
+}
+
+function renderNotifications() {
+    const badge = $("notificationBadge");
+    const list = $("notificationList");
+    if (!badge || !list) return;
+
+    const unread = notifications.filter((item) => !item.isRead).length;
+    badge.textContent = unread;
+    badge.style.display = unread ? "inline-flex" : "none";
+
+    if (!notifications.length) {
+        list.innerHTML = `<div class="empty-state compact-empty">No notifications.</div>`;
+        return;
+    }
+
+    list.innerHTML = notifications.map((item) => `
+        <button type="button" class="notification-item ${item.isRead ? "" : "unread"}" data-id="${escapeHtml(item.id)}" data-ticket="${escapeHtml(item.ticketId || "")}">
+            <strong>${escapeHtml(item.ticketNumber || "ServiceDesk")}</strong>
+            <span>${escapeHtml(item.message)}</span>
+            <small>${escapeHtml(item.createdAt || "")}</small>
+        </button>
+    `).join("");
+
+    list.querySelectorAll(".notification-item").forEach((button) => {
+        button.addEventListener("click", async () => {
+            try {
+                await readJson(await authFetch(`${API_URL}/notifications/${button.dataset.id}/read`, { method: "PUT" }));
+                const item = notifications.find((n) => n.id === button.dataset.id);
+                if (item) item.isRead = 1;
+                renderNotifications();
+                if (button.dataset.ticket) {
+                    $("notificationPanel").classList.remove("open");
+                    await openTicketDetail(button.dataset.ticket);
+                }
+            } catch (error) {
+                showToast(`Could not open notification: ${error.message}`);
+            }
+        });
+    });
+}
+
+$("notificationButton").addEventListener("click", function () {
+    $("notificationPanel").classList.toggle("open");
+});
+
+$("markAllNotificationsButton").addEventListener("click", async function () {
+    try {
+        await readJson(await authFetch(`${API_URL}/notifications/read-all`, { method: "PUT" }));
+        notifications.forEach((item) => { item.isRead = 1; });
+        renderNotifications();
+    } catch (error) {
+        showToast(`Could not mark notifications: ${error.message}`);
+    }
+});
+
 function isTicketOverdue(ticket) {
     if (!ticket.slaDeadline || ["Resolved", "Closed"].includes(ticket.status)) return false;
     return new Date(ticket.slaDeadline.replace(" ", "T")).getTime() < Date.now();
 }
 
 function renderDashboard() {
+    const roleTitle = $("dashboardRoleTitle");
+    const roleText = $("dashboardRoleText");
+
+    if (loggedUser.role === "admin") {
+        roleTitle.textContent = "Admin operations overview";
+        roleText.textContent = "All current support workload, critical incidents and SLA risk.";
+    } else if (loggedUser.role === "technician") {
+        roleTitle.textContent = "My technician workspace";
+        roleText.textContent = "Tickets assigned to you plus unassigned work available to claim.";
+    } else {
+        roleTitle.textContent = "My support requests";
+        roleText.textContent = "Track your open requests, replies and resolved issues.";
+    }
+
     $("statNewTickets").textContent = tickets.filter((ticket) => ticket.status === "New").length;
     $("statOpenTickets").textContent = tickets.filter((ticket) => !["Resolved", "Closed"].includes(ticket.status)).length;
     $("statCriticalTickets").textContent = tickets.filter((ticket) => ticket.priority === "Critical").length;
     $("statClosedTickets").textContent = tickets.filter((ticket) => ticket.status === "Closed").length;
     $("statOverdueTickets").textContent = tickets.filter(isTicketOverdue).length;
+
+    if (loggedUser.role === "technician") {
+        $("statNewTickets").nextElementSibling.textContent = "Unassigned / New";
+        $("statOpenTickets").nextElementSibling.textContent = "My Active Queue";
+    } else if (loggedUser.role === "customer") {
+        $("statNewTickets").nextElementSibling.textContent = "My New Tickets";
+        $("statOpenTickets").nextElementSibling.textContent = "My Open Tickets";
+    } else {
+        $("statNewTickets").nextElementSibling.textContent = "New Tickets";
+        $("statOpenTickets").nextElementSibling.textContent = "Open Tickets";
+    }
+
     renderTicketCards($("dashboardTicketList"), tickets.slice(0, 5));
 }
 
@@ -365,7 +457,7 @@ function renderTickets() {
         const customerText = `${ticket.company || ""} ${ticket.customerName || ""}`.toLowerCase();
         return (!status || ticket.status === status) &&
             (!priority || ticket.priority === priority) &&
-            (!search || ticket.title.toLowerCase().includes(search) || customerText.includes(search));
+            (!search || ticket.title.toLowerCase().includes(search) || (ticket.ticketNumber || "").toLowerCase().includes(search) || customerText.includes(search));
     });
 
     renderTicketCards($("ticketList"), filtered);
@@ -381,7 +473,7 @@ function renderTicketCards(container, items) {
         <button class="ticket-card ticket-card-button" type="button" data-id="${escapeHtml(ticket.id)}">
             <div class="ticket-card-content">
                 <div class="ticket-card-title-row">
-                    <h3>${escapeHtml(ticket.title)}</h3>
+                    <h3><span class="ticket-number">${escapeHtml(ticket.ticketNumber || "Ticket")}</span> ${escapeHtml(ticket.title)}</h3>
                     ${isTicketOverdue(ticket) ? `<span class="badge sla-overdue">SLA overdue</span>` : ""}
                 </div>
                 <p>${escapeHtml(ticket.description)}</p>
@@ -466,7 +558,7 @@ $("ticketForm").addEventListener("submit", async function (event) {
             })
         });
         await readJson(response);
-        await loadTickets();
+        await Promise.all([loadTickets(), loadNotifications()]);
         closeModal("ticketModal");
         renderDashboard();
         renderTickets();
@@ -659,7 +751,7 @@ function renderTicketDetail() {
     const { ticket, comments, history, attachments = [] } = currentTicketDetail;
     const staff = isStaff();
 
-    $("detailTicketId").textContent = ticket.id;
+    $("detailTicketId").textContent = ticket.ticketNumber || ticket.id;
     $("detailTitle").textContent = ticket.title;
     $("detailCustomer").textContent = ticket.company
         ? `${ticket.company} — ${ticket.customerName}`
@@ -668,6 +760,8 @@ function renderTicketDetail() {
     $("detailStatus").value = ticket.status;
     $("detailPriority").value = ticket.priority;
     $("detailSla").value = toDatetimeLocal(ticket.slaDeadline);
+    $("detailApplySlaRule").checked = false;
+    updateSlaRuleHint();
     $("detailCreatedAt").textContent = formatDate(ticket.createdAt);
     $("detailUpdatedAt").textContent = formatDate(ticket.updatedAt);
     $("detailResolvedAt").textContent = formatDate(ticket.resolvedAt);
@@ -840,6 +934,15 @@ function renderSlaState(ticket) {
     }
 }
 
+const SLA_RULE_HOURS = { Low: 72, Medium: 24, High: 8, Critical: 2 };
+
+function updateSlaRuleHint() {
+    const priority = $("detailPriority").value || "Medium";
+    $("detailSlaRuleHint").textContent = `Automatic SLA for ${priority}: ${SLA_RULE_HOURS[priority]} hours from now.`;
+}
+
+$("detailPriority").addEventListener("change", updateSlaRuleHint);
+
 $("closeTicketDetailButton").addEventListener("click", () => closeModal("ticketDetailModal"));
 
 $("saveTicketButton").addEventListener("click", async function () {
@@ -852,11 +955,12 @@ $("saveTicketButton").addEventListener("click", async function () {
                 assignedUserId: $("detailTechnician").value || null,
                 priority: $("detailPriority").value,
                 status: $("detailStatus").value,
-                slaDeadline: $("detailSla").value || null
+                slaDeadline: $("detailSla").value || null,
+                applySlaRule: $("detailApplySlaRule").checked
             })
         });
         await readJson(response);
-        await loadTickets();
+        await Promise.all([loadTickets(), loadNotifications()]);
         await openTicketDetail(currentTicketDetail.ticket.id);
         renderDashboard();
         renderTickets();
@@ -881,7 +985,7 @@ $("commentForm").addEventListener("submit", async function (event) {
         await readJson(response);
         $("commentMessage").value = "";
         $("commentInternal").checked = false;
-        await openTicketDetail(currentTicketDetail.ticket.id);
+        await Promise.all([openTicketDetail(currentTicketDetail.ticket.id), loadNotifications()]);
     } catch (error) {
         showToast(`Could not add comment: ${error.message}`);
     }

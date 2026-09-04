@@ -1119,3 +1119,90 @@ button {
         justify-content: flex-start;
     }
 }
+
+
+/* =========================================================
+   v0.4 - ROLE DASHBOARDS / NOTIFICATIONS / SLA RULES
+========================================================= */
+
+.dashboard-role-banner {
+    margin-bottom: 20px;
+    padding: 18px 20px;
+    border: 1px solid #dbeafe;
+    border-radius: 12px;
+    background: #eff6ff;
+}
+.dashboard-role-banner h2 { margin: 0 0 5px; font-size: 20px; }
+.dashboard-role-banner p { margin: 0; color: #4b5563; }
+.ticket-number { color: #2563eb; font-size: 13px; font-weight: 700; margin-right: 7px; }
+
+.notification-wrap { position: relative; }
+.notification-button {
+    position: relative;
+    width: 42px;
+    height: 42px;
+    border-radius: 10px;
+    background: white;
+    border: 1px solid #e5e7eb;
+    font-size: 18px;
+}
+#notificationBadge {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 5px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: #dc2626;
+    color: white;
+    font-size: 11px;
+    font-weight: 700;
+}
+.notification-panel {
+    display: none;
+    position: absolute;
+    right: 0;
+    top: 50px;
+    width: 360px;
+    max-height: 470px;
+    overflow: hidden;
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    box-shadow: 0 18px 45px rgba(15, 23, 42, .16);
+    z-index: 80;
+}
+.notification-panel.open { display: block; }
+.notification-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    border-bottom: 1px solid #e5e7eb;
+}
+.notification-panel-header button { background: transparent; color: #2563eb; font-size: 12px; }
+.notification-list { max-height: 400px; overflow-y: auto; }
+.notification-item {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    padding: 13px 16px;
+    text-align: left;
+    background: white;
+    border-bottom: 1px solid #f3f4f6;
+}
+.notification-item:hover { background: #f9fafb; }
+.notification-item.unread { background: #eff6ff; }
+.notification-item span { color: #374151; font-size: 13px; }
+.notification-item small { color: #9ca3af; font-size: 11px; }
+.sla-rule-toggle { display: flex; gap: 7px; align-items: center; margin-top: 8px; font-size: 12px; color: #374151; }
+.sla-rule-hint { margin-top: 5px; color: #6b7280; font-size: 11px; }
+
+@media (max-width: 700px) {
+    .notification-panel { width: min(330px, calc(100vw - 30px)); right: -120px; }
+}

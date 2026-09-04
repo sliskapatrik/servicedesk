@@ -41,6 +41,13 @@
                 <p id="pageSubtitle">ServiceDesk overview</p>
             </div>
             <div class="user-menu">
+                <div class="notification-wrap">
+                    <button class="notification-button" id="notificationButton" type="button" aria-label="Notifications">🔔<span id="notificationBadge">0</span></button>
+                    <div class="notification-panel" id="notificationPanel">
+                        <div class="notification-panel-header"><strong>Notifications</strong><button id="markAllNotificationsButton" type="button">Mark all read</button></div>
+                        <div id="notificationList" class="notification-list"></div>
+                    </div>
+                </div>
                 <div class="user-info">
                     <strong id="currentUserName">User</strong>
                     <span id="currentUserRole">role</span>
@@ -50,6 +57,10 @@
         </header>
 
         <section class="view active-view" id="dashboardView">
+            <div class="dashboard-role-banner">
+                <h2 id="dashboardRoleTitle">ServiceDesk overview</h2>
+                <p id="dashboardRoleText">Your current ticket workload and SLA status.</p>
+            </div>
             <div class="stats">
                 <div class="stat-card"><h2 id="statNewTickets">0</h2><p>New Tickets</p></div>
                 <div class="stat-card"><h2 id="statOpenTickets">0</h2><p>Open Tickets</p></div>
@@ -306,6 +317,8 @@
                     <div class="detail-field staff-only-detail" id="slaField">
                         <label for="detailSla">SLA deadline</label>
                         <input type="datetime-local" id="detailSla">
+                        <label class="sla-rule-toggle"><input type="checkbox" id="detailApplySlaRule"> Recalculate from priority rule</label>
+                        <div class="sla-rule-hint" id="detailSlaRuleHint"></div>
                         <div class="sla-state" id="detailSlaState"></div>
                     </div>
                     <button type="button" class="primary-button detail-save-button staff-only-detail" id="saveTicketButton">Save changes</button>
