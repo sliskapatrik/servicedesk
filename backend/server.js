@@ -241,6 +241,240 @@ app.put("/api/notifications/read-all", async function (req, res) {
 });
 
 /* =========================================================
+   ANALYTICS / REPORTING (v0.5)
+========================================================= */
+
+function csvCell(value) {
+    const text = value == null ? "" : String(value);
+    return `"${text.replace(/"/g, '""')}"`;
+}
+
+app.get(
+    "/api/analytics/overview",
+    requireRole("admin"),
+    async function (req, res) {
+        try {
+            const [[summary]] = await db.query(`
+                SELECT
+                    COUNT(*) AS totalTickets,
+                    SUM(CASE WHEN status NOT IN ('Resolved', 'Closed') THEN 1 ELSE 0 END) AS activeTickets,
+                    SUM(CASE WHEN status IN ('Resolved', 'Closed') THEN 1 ELSE 0 END) AS completedTickets,
+                    SUM(CASE
+                        WHEN sla_deadline IS NOT NULL
+                         AND status NOT IN ('Resolved', 'Closed')
+                         AND sla_deadline < NOW()
+                        THEN 1 ELSE 0 END
+                    ) AS overdueTickets,
+                    ROUND(AVG(CASE
+                        WHEN resolved_at IS NOT NULL
+                        THEN TIMESTAMPDIFF(MINUTE, created_at, resolved_at) / 60
+                        ELSE NULL END
+                    ), 1) AS avgResolutionHours,
+                    ROUND(
+                        100 * SUM(CASE
+                            WHEN resolved_at IS NOT NULL
+                             AND sla_deadline IS NOT NULL
+                             AND resolved_at <= sla_deadline
+                            THEN 1 ELSE 0 END
+                        ) /
+                        NULLIF(SUM(CASE
+                            WHEN resolved_at IS NOT NULL
+                             AND sla_deadline IS NOT NULL
+                            THEN 1 ELSE 0 END
+                        ), 0),
+                        1
+                    ) AS slaCompliancePct
+                FROM tickets
+            `);
+
+            const [statusBreakdown] = await db.query(`
+                SELECT status AS label, COUNT(*) AS value
+                FROM tickets
+                GROUP BY status
+                ORDER BY value DESC
+            `);
+
+            const [priorityBreakdown] = await db.query(`
+                SELECT priority AS label, COUNT(*) AS value
+                FROM tickets
+                GROUP BY priority
+                ORDER BY FIELD(priority, 'Critical', 'High', 'Medium', 'Low')
+            `);
+
+            const [createdByDay] = await db.query(`
+                SELECT DATE_FORMAT(created_at, '%Y-%m-%d') AS day, COUNT(*) AS createdCount
+                FROM tickets
+                WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 13 DAY)
+                GROUP BY DATE(created_at)
+                ORDER BY day
+            `);
+
+            const [resolvedByDay] = await db.query(`
+                SELECT DATE_FORMAT(resolved_at, '%Y-%m-%d') AS day, COUNT(*) AS resolvedCount
+                FROM tickets
+                WHERE resolved_at IS NOT NULL
+                  AND resolved_at >= DATE_SUB(CURDATE(), INTERVAL 13 DAY)
+                GROUP BY DATE(resolved_at)
+                ORDER BY day
+            `);
+
+            const [technicianWorkload] = await db.query(`
+                SELECT
+                    u.id,
+                    u.name,
+                    u.email,
+                    SUM(CASE
+                        WHEN t.status NOT IN ('Resolved', 'Closed') THEN 1 ELSE 0 END
+                    ) AS activeTickets,
+                    SUM(CASE
+                        WHEN t.status NOT IN ('Resolved', 'Closed')
+                         AND t.sla_deadline IS NOT NULL
+                         AND t.sla_deadline < NOW()
+                        THEN 1 ELSE 0 END
+                    ) AS overdueTickets,
+                    SUM(CASE
+                        WHEN t.resolved_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+                        THEN 1 ELSE 0 END
+                    ) AS resolvedLast30Days,
+                    ROUND(AVG(CASE
+                        WHEN t.resolved_at IS NOT NULL
+                        THEN TIMESTAMPDIFF(MINUTE, t.created_at, t.resolved_at) / 60
+                        ELSE NULL END
+                    ), 1) AS avgResolutionHours
+                FROM users u
+                LEFT JOIN tickets t ON t.assigned_user_id = u.id
+                WHERE u.role = 'technician'
+                  AND u.status = 'active'
+                GROUP BY u.id, u.name, u.email
+                ORDER BY activeTickets DESC, u.name ASC
+            `);
+
+            const [topCustomers] = await db.query(`
+                SELECT
+                    c.id,
+                    COALESCE(NULLIF(c.company, ''), c.contact_name) AS name,
+                    COUNT(t.id) AS totalTickets,
+                    SUM(CASE WHEN t.status NOT IN ('Resolved', 'Closed') THEN 1 ELSE 0 END) AS activeTickets
+                FROM customers c
+                LEFT JOIN tickets t ON t.customer_id = c.id
+                GROUP BY c.id, c.company, c.contact_name
+                HAVING totalTickets > 0
+                ORDER BY totalTickets DESC, name ASC
+                LIMIT 8
+            `);
+
+            const [recentAudit] = await db.query(`
+                SELECT
+                    h.id,
+                    h.action,
+                    h.old_value AS oldValue,
+                    h.new_value AS newValue,
+                    DATE_FORMAT(h.created_at, '%Y-%m-%d %H:%i:%s') AS createdAt,
+                    u.name AS userName,
+                    CONCAT('SD-', LPAD(t.ticket_no, 6, '0')) AS ticketNumber,
+                    t.title AS ticketTitle
+                FROM ticket_history h
+                INNER JOIN tickets t ON t.id = h.ticket_id
+                LEFT JOIN users u ON u.id = h.user_id
+                ORDER BY h.created_at DESC
+                LIMIT 20
+            `);
+
+            res.json({
+                summary: {
+                    totalTickets: Number(summary.totalTickets || 0),
+                    activeTickets: Number(summary.activeTickets || 0),
+                    completedTickets: Number(summary.completedTickets || 0),
+                    overdueTickets: Number(summary.overdueTickets || 0),
+                    avgResolutionHours: summary.avgResolutionHours == null ? null : Number(summary.avgResolutionHours),
+                    slaCompliancePct: summary.slaCompliancePct == null ? null : Number(summary.slaCompliancePct)
+                },
+                statusBreakdown: statusBreakdown.map((row) => ({ label: row.label, value: Number(row.value) })),
+                priorityBreakdown: priorityBreakdown.map((row) => ({ label: row.label, value: Number(row.value) })),
+                createdByDay,
+                resolvedByDay,
+                technicianWorkload: technicianWorkload.map((row) => ({
+                    ...row,
+                    activeTickets: Number(row.activeTickets || 0),
+                    overdueTickets: Number(row.overdueTickets || 0),
+                    resolvedLast30Days: Number(row.resolvedLast30Days || 0),
+                    avgResolutionHours: row.avgResolutionHours == null ? null : Number(row.avgResolutionHours)
+                })),
+                topCustomers: topCustomers.map((row) => ({
+                    ...row,
+                    totalTickets: Number(row.totalTickets || 0),
+                    activeTickets: Number(row.activeTickets || 0)
+                })),
+                recentAudit
+            });
+        } catch (error) {
+            console.error("GET analytics error:", error);
+            res.status(500).json({ error: "Failed to load analytics" });
+        }
+    }
+);
+
+app.get(
+    "/api/reports/tickets.csv",
+    requireRole("admin"),
+    async function (req, res) {
+        try {
+            const [rows] = await db.query(`
+                SELECT
+                    CONCAT('SD-', LPAD(t.ticket_no, 6, '0')) AS ticketNumber,
+                    t.title,
+                    t.status,
+                    t.priority,
+                    COALESCE(NULLIF(c.company, ''), c.contact_name) AS customer,
+                    u.name AS technician,
+                    DATE_FORMAT(t.created_at, '%Y-%m-%d %H:%i:%s') AS createdAt,
+                    DATE_FORMAT(t.sla_deadline, '%Y-%m-%d %H:%i:%s') AS slaDeadline,
+                    DATE_FORMAT(t.resolved_at, '%Y-%m-%d %H:%i:%s') AS resolvedAt,
+                    CASE
+                        WHEN t.sla_deadline IS NULL THEN 'No SLA'
+                        WHEN t.resolved_at IS NOT NULL AND t.resolved_at <= t.sla_deadline THEN 'Met'
+                        WHEN t.resolved_at IS NOT NULL AND t.resolved_at > t.sla_deadline THEN 'Breached'
+                        WHEN t.status NOT IN ('Resolved', 'Closed') AND t.sla_deadline < NOW() THEN 'Overdue'
+                        ELSE 'Within SLA'
+                    END AS slaState
+                FROM tickets t
+                INNER JOIN customers c ON c.id = t.customer_id
+                LEFT JOIN users u ON u.id = t.assigned_user_id
+                ORDER BY t.created_at DESC
+            `);
+
+            const header = [
+                "Ticket Number", "Title", "Status", "Priority", "Customer", "Technician",
+                "Created At", "SLA Deadline", "Resolved At", "SLA State"
+            ];
+
+            const lines = [header.map(csvCell).join(",")];
+            for (const row of rows) {
+                lines.push([
+                    row.ticketNumber,
+                    row.title,
+                    row.status,
+                    row.priority,
+                    row.customer,
+                    row.technician || "Unassigned",
+                    row.createdAt,
+                    row.slaDeadline || "",
+                    row.resolvedAt || "",
+                    row.slaState
+                ].map(csvCell).join(","));
+            }
+
+            res.setHeader("Content-Type", "text/csv; charset=utf-8");
+            res.setHeader("Content-Disposition", `attachment; filename="servicedesk-tickets-${new Date().toISOString().slice(0, 10)}.csv"`);
+            res.send(`\uFEFF${lines.join("\r\n")}`);
+        } catch (error) {
+            console.error("EXPORT tickets error:", error);
+            res.status(500).json({ error: "Failed to export tickets" });
+        }
+    }
+);
+
+/* =========================================================
    USERS
 ========================================================= */
 

@@ -9,6 +9,7 @@ let currentTicketDetail = null;
 let users = [];
 let customerUsers = [];
 let notifications = [];
+let analyticsData = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -142,14 +143,16 @@ const views = {
     dashboard: $("dashboardView"),
     tickets: $("ticketsView"),
     customers: $("customersView"),
-    users: $("usersView")
+    users: $("usersView"),
+    reports: $("reportsView")
 };
 
 const titles = {
     dashboard: ["Dashboard", "ServiceDesk overview"],
     tickets: ["Tickets", "Support requests and incidents"],
     customers: ["Customers", "Customer directory"],
-    users: ["Users", "ServiceDesk accounts"]
+    users: ["Users", "ServiceDesk accounts"],
+    reports: ["Reports", "Analytics, SLA performance and workload"]
 };
 
 document.querySelectorAll(".menu-item").forEach((button) => {
@@ -167,6 +170,154 @@ function showView(name) {
     if (name === "tickets") renderTickets();
     if (name === "customers") renderCustomers();
     if (name === "users") renderUsers();
+    if (name === "reports" && isAdmin()) loadAnalytics();
+}
+
+async function loadAnalytics() {
+    if (!isAdmin()) return;
+
+    try {
+        analyticsData = await readJson(await authFetch(`${API_URL}/analytics/overview`));
+        renderAnalytics();
+    } catch (error) {
+        console.error("Analytics API error:", error);
+        showToast(`Could not load reports: ${error.message}`);
+    }
+}
+
+function renderBarChart(containerId, items) {
+    const container = $(containerId);
+    if (!container) return;
+
+    if (!items || !items.length) {
+        container.innerHTML = `<div class="empty-state compact-empty">No data yet.</div>`;
+        return;
+    }
+
+    const max = Math.max(...items.map((item) => Number(item.value || 0)), 1);
+    container.innerHTML = items.map((item) => {
+        const value = Number(item.value || 0);
+        const width = Math.max(4, Math.round((value / max) * 100));
+        return `
+            <div class="bar-row">
+                <div class="bar-label"><span>${escapeHtml(item.label)}</span><strong>${value}</strong></div>
+                <div class="bar-track"><div class="bar-fill" style="width:${width}%"></div></div>
+            </div>
+        `;
+    }).join("");
+}
+
+function buildLast14Days() {
+    const result = [];
+    const now = new Date();
+    for (let offset = 13; offset >= 0; offset -= 1) {
+        const date = new Date(now.getFullYear(), now.getMonth(), now.getDate() - offset);
+        const key = [
+            date.getFullYear(),
+            String(date.getMonth() + 1).padStart(2, "0"),
+            String(date.getDate()).padStart(2, "0")
+        ].join("-");
+        result.push({ key, label: `${date.getDate()}.${date.getMonth() + 1}.` });
+    }
+    return result;
+}
+
+function renderActivityChart() {
+    const container = $("activityChart");
+    if (!container || !analyticsData) return;
+
+    const createdMap = new Map((analyticsData.createdByDay || []).map((item) => [item.day, Number(item.createdCount || 0)]));
+    const resolvedMap = new Map((analyticsData.resolvedByDay || []).map((item) => [item.day, Number(item.resolvedCount || 0)]));
+    const days = buildLast14Days();
+    const max = Math.max(1, ...days.flatMap((day) => [createdMap.get(day.key) || 0, resolvedMap.get(day.key) || 0]));
+
+    container.innerHTML = `
+        <div class="activity-legend"><span><i class="legend-created"></i>Created</span><span><i class="legend-resolved"></i>Resolved</span></div>
+        <div class="activity-columns">
+            ${days.map((day) => {
+                const created = createdMap.get(day.key) || 0;
+                const resolved = resolvedMap.get(day.key) || 0;
+                const createdHeight = Math.round((created / max) * 100);
+                const resolvedHeight = Math.round((resolved / max) * 100);
+                return `
+                    <div class="activity-day" title="${day.key}: ${created} created, ${resolved} resolved">
+                        <div class="activity-bars">
+                            <div class="activity-bar created" style="height:${createdHeight}%"><span>${created || ""}</span></div>
+                            <div class="activity-bar resolved" style="height:${resolvedHeight}%"><span>${resolved || ""}</span></div>
+                        </div>
+                        <small>${day.label}</small>
+                    </div>
+                `;
+            }).join("")}
+        </div>
+    `;
+}
+
+function renderAnalytics() {
+    if (!analyticsData) return;
+    const summary = analyticsData.summary || {};
+
+    $("reportTotalTickets").textContent = summary.totalTickets ?? 0;
+    $("reportActiveTickets").textContent = summary.activeTickets ?? 0;
+    $("reportOverdueTickets").textContent = summary.overdueTickets ?? 0;
+    $("reportSlaCompliance").textContent = summary.slaCompliancePct == null ? "—" : `${summary.slaCompliancePct}%`;
+    $("reportAvgResolution").textContent = summary.avgResolutionHours == null ? "—" : `${summary.avgResolutionHours}h`;
+
+    renderBarChart("statusChart", analyticsData.statusBreakdown || []);
+    renderBarChart("priorityChart", analyticsData.priorityBreakdown || []);
+    renderActivityChart();
+
+    const workload = $("technicianWorkloadBody");
+    const techniciansData = analyticsData.technicianWorkload || [];
+    workload.innerHTML = techniciansData.length ? techniciansData.map((item) => `
+        <tr>
+            <td><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.email)}</small></td>
+            <td>${item.activeTickets}</td>
+            <td class="${item.overdueTickets ? "metric-danger" : ""}">${item.overdueTickets}</td>
+            <td>${item.resolvedLast30Days}</td>
+            <td>${item.avgResolutionHours == null ? "—" : `${item.avgResolutionHours}h`}</td>
+        </tr>
+    `).join("") : `<tr><td colspan="5" class="table-empty">No active technicians.</td></tr>`;
+
+    const customerList = $("topCustomersList");
+    const customersData = analyticsData.topCustomers || [];
+    customerList.innerHTML = customersData.length ? customersData.map((item, index) => `
+        <div class="metric-list-row">
+            <span class="metric-rank">${index + 1}</span>
+            <div><strong>${escapeHtml(item.name)}</strong><small>${item.activeTickets} active</small></div>
+            <span class="metric-value">${item.totalTickets}</span>
+        </div>
+    `).join("") : `<div class="empty-state compact-empty">No customer activity yet.</div>`;
+
+    const auditList = $("recentAuditList");
+    const audits = analyticsData.recentAudit || [];
+    auditList.innerHTML = audits.length ? audits.map((item) => `
+        <div class="audit-item">
+            <div><strong>${escapeHtml(item.ticketNumber)}</strong> · ${escapeHtml(item.action)}</div>
+            <p>${escapeHtml(item.userName || "System")} · ${escapeHtml(item.createdAt)}</p>
+        </div>
+    `).join("") : `<div class="empty-state compact-empty">No audit activity yet.</div>`;
+}
+
+async function exportTicketsCsv() {
+    try {
+        const response = await authFetch(`${API_URL}/reports/tickets.csv`);
+        if (!response.ok) {
+            const payload = await response.json().catch(() => ({}));
+            throw new Error(payload.error || "Export failed");
+        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `servicedesk-tickets-${new Date().toISOString().slice(0, 10)}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+    } catch (error) {
+        showToast(`Could not export CSV: ${error.message}`);
+    }
 }
 
 async function loadCustomers() {
@@ -1036,6 +1187,15 @@ document.querySelectorAll(".modal").forEach((modal) => {
         if (event.target === modal) modal.classList.remove("open");
     });
 });
+
+
+if ($("refreshReportsButton")) {
+    $("refreshReportsButton").addEventListener("click", loadAnalytics);
+}
+
+if ($("exportTicketsButton")) {
+    $("exportTicketsButton").addEventListener("click", exportTicketsCsv);
+}
 
 async function startApplication() {
     const validSession = await loadCurrentUser();

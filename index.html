@@ -31,6 +31,7 @@
             <button class="menu-item" data-view="tickets">Tickets</button>
             <button class="menu-item staff-only" data-view="customers">Customers</button>
             <button class="menu-item admin-only" data-view="users">Users</button>
+            <button class="menu-item admin-only" data-view="reports">Reports</button>
         </nav>
     </aside>
 
@@ -145,6 +146,68 @@
                 <div class="data-list" id="userList"></div>
             </section>
         </section>
+
+
+        <section class="view" id="reportsView">
+            <div class="report-toolbar">
+                <div>
+                    <h2>Reporting & Analytics</h2>
+                    <p class="section-description">SLA performance, ticket trends, technician workload and audit activity.</p>
+                </div>
+                <div class="report-toolbar-actions">
+                    <button class="secondary-button" id="refreshReportsButton" type="button">Refresh</button>
+                    <button class="primary-button" id="exportTicketsButton" type="button">Export Tickets CSV</button>
+                </div>
+            </div>
+
+            <div class="report-stats">
+                <div class="stat-card"><h2 id="reportTotalTickets">0</h2><p>Total Tickets</p></div>
+                <div class="stat-card"><h2 id="reportActiveTickets">0</h2><p>Active Tickets</p></div>
+                <div class="stat-card"><h2 id="reportSlaCompliance">—</h2><p>SLA Compliance</p></div>
+                <div class="stat-card"><h2 id="reportAvgResolution">—</h2><p>Avg. Resolution</p></div>
+                <div class="stat-card"><h2 id="reportOverdueTickets">0</h2><p>Overdue</p></div>
+            </div>
+
+            <div class="analytics-grid">
+                <section class="panel analytics-panel">
+                    <div class="section-header compact-header"><div><h2>Tickets by Status</h2><p class="section-description">Current distribution.</p></div></div>
+                    <div id="statusChart" class="bar-chart"></div>
+                </section>
+
+                <section class="panel analytics-panel">
+                    <div class="section-header compact-header"><div><h2>Tickets by Priority</h2><p class="section-description">Current severity mix.</p></div></div>
+                    <div id="priorityChart" class="bar-chart"></div>
+                </section>
+            </div>
+
+            <section class="panel report-section">
+                <div class="section-header compact-header"><div><h2>14-Day Ticket Activity</h2><p class="section-description">Created versus resolved tickets.</p></div></div>
+                <div id="activityChart" class="activity-chart"></div>
+            </section>
+
+            <section class="panel report-section">
+                <div class="section-header compact-header"><div><h2>Technician Workload</h2><p class="section-description">Active queue, overdue workload and 30-day throughput.</p></div></div>
+                <div class="table-wrap">
+                    <table class="analytics-table">
+                        <thead><tr><th>Technician</th><th>Active</th><th>Overdue</th><th>Resolved 30d</th><th>Avg. Resolution</th></tr></thead>
+                        <tbody id="technicianWorkloadBody"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <div class="analytics-grid">
+                <section class="panel analytics-panel">
+                    <div class="section-header compact-header"><div><h2>Top Customers</h2><p class="section-description">Customers generating the most support workload.</p></div></div>
+                    <div id="topCustomersList" class="metric-list"></div>
+                </section>
+
+                <section class="panel analytics-panel">
+                    <div class="section-header compact-header"><div><h2>Recent Audit Activity</h2><p class="section-description">Latest recorded changes across tickets.</p></div></div>
+                    <div id="recentAuditList" class="audit-list"></div>
+                </section>
+            </div>
+        </section>
+
     </main>
 </div>
 
