@@ -16,6 +16,9 @@ let knowledgeArticles = [];
 let savedFilters = [];
 let cannedReplies = [];
 let ticketTemplates = [];
+let appConfig = { appName: "ServiceDesk", supportEmail: "", defaultPriority: "Medium", allowCustomerTicketCreation: true, sessionHours: 8, minimumPasswordLength: 8, slaRules: { Low: 72, Medium: 24, High: 8, Critical: 2 } };
+let adminSettingsData = null;
+let settingsAudit = [];
 let activeQueue = "all";
 const selectedTicketIds = new Set();
 
@@ -125,7 +128,8 @@ async function showApplication() {
         loadKnowledge(),
         loadSavedFilters(),
         loadCannedReplies(),
-        loadTicketTemplates()
+        loadTicketTemplates(),
+        loadAppConfig()
     ]);
     renderDashboard();
     renderTickets();
@@ -134,6 +138,7 @@ async function showApplication() {
     populateBulkTechnicians();
     populateTicketTemplateSelect();
     populateCannedReplySelect();
+    applyAppBranding();
 }
 
 function applyRolePermissions() {
@@ -163,7 +168,8 @@ const views = {
     users: $("usersView"),
     reports: $("reportsView"),
     knowledge: $("knowledgeView"),
-    tools: $("toolsView")
+    tools: $("toolsView"),
+    settings: $("settingsView")
 };
 
 const titles = {
@@ -173,7 +179,8 @@ const titles = {
     users: ["Users", "ServiceDesk accounts"],
     reports: ["Reports", "Analytics, SLA performance and workload"],
     knowledge: ["Knowledge Base", "Solutions, FAQ and troubleshooting articles"],
-    tools: ["Productivity", "Templates, canned replies and support workflow tools"]
+    tools: ["Productivity", "Templates, canned replies and support workflow tools"],
+    settings: ["Settings", "Application, SLA and security configuration"]
 };
 
 document.querySelectorAll(".menu-item").forEach((button) => {
@@ -194,6 +201,107 @@ function showView(name) {
     if (name === "reports" && isAdmin()) loadAnalytics();
     if (name === "knowledge") renderKnowledge();
     if (name === "tools") renderProductivityTools();
+    if (name === "settings" && isAdmin()) loadAdminSettings();
+}
+
+async function loadAppConfig() {
+    try {
+        appConfig = await readJson(await authFetch(`${API_URL}/config`));
+        SLA_RULE_HOURS = { ...SLA_RULE_HOURS, ...(appConfig.slaRules || {}) };
+    } catch (error) {
+        console.error("Config API error:", error);
+    }
+}
+
+function applyAppBranding() {
+    const name = appConfig.appName || "ServiceDesk";
+    document.title = name;
+    document.querySelectorAll(".logo, .login-logo").forEach((element) => { element.textContent = name; });
+    if ($("ticketPriority") && appConfig.defaultPriority) $("ticketPriority").value = appConfig.defaultPriority;
+    if (loggedUser?.role === "customer") {
+        const disabled = appConfig.allowCustomerTicketCreation === false;
+        if ($("addTicketButton")) $("addTicketButton").style.display = disabled ? "none" : "";
+        if ($("dashboardAddTicketButton")) $("dashboardAddTicketButton").style.display = disabled ? "none" : "";
+    }
+}
+
+async function loadAdminSettings() {
+    if (!isAdmin()) return;
+    try {
+        const [settings, audit] = await Promise.all([
+            readJson(await authFetch(`${API_URL}/settings`)),
+            readJson(await authFetch(`${API_URL}/settings/audit`))
+        ]);
+        adminSettingsData = settings;
+        settingsAudit = audit;
+        renderAdminSettings();
+    } catch (error) {
+        showToast(`Could not load settings: ${error.message}`);
+    }
+}
+
+function renderAdminSettings() {
+    if (!adminSettingsData) return;
+    const values = adminSettingsData.settings || {};
+    const rules = Object.fromEntries((adminSettingsData.slaRules || []).map((row) => [row.priority, Number(row.hours)]));
+    $("settingAppName").value = values.app_name || "ServiceDesk";
+    $("settingSupportEmail").value = values.support_email || "";
+    $("settingDefaultPriority").value = values.default_priority || "Medium";
+    $("settingCustomerCreation").checked = String(values.allow_customer_ticket_creation) === "1";
+    $("settingSessionHours").value = values.session_hours || 8;
+    $("settingMinPassword").value = values.minimum_password_length || 8;
+    $("slaCritical").value = rules.Critical || 2;
+    $("slaHigh").value = rules.High || 8;
+    $("slaMedium").value = rules.Medium || 24;
+    $("slaLow").value = rules.Low || 72;
+
+    const summary = adminSettingsData.summary || {};
+    $("settingsSystemSummary").innerHTML = `
+        <div class="summary-box"><strong>${Number(summary.usersCount || 0)}</strong><span>Total users</span></div>
+        <div class="summary-box"><strong>${Number(summary.activeUsersCount || 0)}</strong><span>Active users</span></div>
+        <div class="summary-box"><strong>${Number(summary.activeTicketsCount || 0)}</strong><span>Active tickets</span></div>
+        <div class="summary-box"><strong>${Number(summary.overdueTicketsCount || 0)}</strong><span>SLA overdue</span></div>
+        <div class="summary-box settings-wide"><strong style="font-size:15px">${escapeHtml(summary.databaseTime || "—")}</strong><span>Database time</span></div>`;
+
+    $("settingsAuditList").innerHTML = settingsAudit.length ? settingsAudit.map((entry) => `
+        <div class="audit-entry">
+            <strong>${escapeHtml(entry.settingKey)}</strong>
+            <div>${escapeHtml(entry.oldValue ?? "—")} → ${escapeHtml(entry.newValue ?? "—")}</div>
+            <small>${escapeHtml(entry.userName || "System")} · ${escapeHtml(entry.createdAt || "")}</small>
+        </div>`).join("") : `<div class="empty-state compact-empty">No configuration changes recorded yet.</div>`;
+}
+
+async function saveAdminSettings() {
+    if (!isAdmin()) return;
+    const payload = {
+        settings: {
+            app_name: $("settingAppName").value.trim(),
+            support_email: $("settingSupportEmail").value.trim(),
+            default_priority: $("settingDefaultPriority").value,
+            allow_customer_ticket_creation: $("settingCustomerCreation").checked,
+            session_hours: Number($("settingSessionHours").value),
+            minimum_password_length: Number($("settingMinPassword").value)
+        },
+        slaRules: {
+            Critical: Number($("slaCritical").value),
+            High: Number($("slaHigh").value),
+            Medium: Number($("slaMedium").value),
+            Low: Number($("slaLow").value)
+        }
+    };
+    try {
+        await readJson(await authFetch(`${API_URL}/settings`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        }));
+        await loadAppConfig();
+        applyAppBranding();
+        await loadAdminSettings();
+        showToast("Settings saved.");
+    } catch (error) {
+        showToast(`Could not save settings: ${error.message}`);
+    }
 }
 
 async function loadAnalytics() {
@@ -750,6 +858,7 @@ function closeModal(id) {
 
 function openTicketModal() {
     $("ticketForm").reset();
+    if ($("ticketPriority") && appConfig.defaultPriority) $("ticketPriority").value = appConfig.defaultPriority;
     if (loggedUser.role !== "customer") populateTicketCustomerSelect();
     populateCategorySelect("ticketCategory");
     populateTagSelect("ticketTags");
@@ -1342,7 +1451,7 @@ function renderSlaState(ticket) {
     }
 }
 
-const SLA_RULE_HOURS = { Low: 72, Medium: 24, High: 8, Critical: 2 };
+let SLA_RULE_HOURS = { Low: 72, Medium: 24, High: 8, Critical: 2 };
 
 function updateSlaRuleHint() {
     const priority = $("detailPriority").value || "Medium";
@@ -1769,3 +1878,5 @@ async function startApplication() {
 }
 
 startApplication();
+
+if ($("saveSettingsButton")) $("saveSettingsButton").addEventListener("click", saveAdminSettings);

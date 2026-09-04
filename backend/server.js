@@ -11,6 +11,7 @@ const db = require("./database");
 const authRoutes = require("./authRoutes");
 const featureRoutes = require("./featureRoutes");
 const workflowRoutes = require("./workflowRoutes");
+const settingsRoutes = require("./settingsRoutes");
 
 const {
     authenticateToken,
@@ -36,15 +37,28 @@ const TICKET_PRIORITIES = [
     "Critical"
 ];
 
-const SLA_HOURS = {
-    Low: 72,
-    Medium: 24,
-    High: 8,
-    Critical: 2
-};
+const DEFAULT_SLA_HOURS = { Low: 72, Medium: 24, High: 8, Critical: 2 };
 
-function calculateSlaDeadline(priority, baseDate = new Date()) {
-    const hours = SLA_HOURS[priority] || SLA_HOURS.Medium;
+async function getAppSetting(key, fallback) {
+    try {
+        const [rows] = await db.query(`SELECT setting_value FROM app_settings WHERE setting_key = ? LIMIT 1`, [key]);
+        return rows.length ? rows[0].setting_value : fallback;
+    } catch {
+        return fallback;
+    }
+}
+
+async function getSlaHours(priority) {
+    try {
+        const [rows] = await db.query(`SELECT response_hours FROM sla_rules WHERE priority = ? AND is_active = 1 LIMIT 1`, [priority]);
+        return rows.length ? Number(rows[0].response_hours) : DEFAULT_SLA_HOURS[priority] || DEFAULT_SLA_HOURS.Medium;
+    } catch {
+        return DEFAULT_SLA_HOURS[priority] || DEFAULT_SLA_HOURS.Medium;
+    }
+}
+
+async function calculateSlaDeadline(priority, baseDate = new Date()) {
+    const hours = await getSlaHours(priority);
     return new Date(baseDate.getTime() + hours * 60 * 60 * 1000);
 }
 
@@ -95,6 +109,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api", authenticateToken);
 app.use("/api", featureRoutes);
 app.use("/api", workflowRoutes);
+app.use("/api", settingsRoutes);
 
 const uploadsDir = path.join(__dirname, "uploads");
 fs.mkdirSync(uploadsDir, { recursive: true });
@@ -528,8 +543,9 @@ app.post(
                 return res.status(400).json({ error: "Name, email, password and valid role are required" });
             }
 
-            if (password.length < 8) {
-                return res.status(400).json({ error: "Password must be at least 8 characters" });
+            const minPasswordLength = Number(await getAppSetting("minimum_password_length", "8"));
+            if (password.length < minPasswordLength) {
+                return res.status(400).json({ error: `Password must be at least ${minPasswordLength} characters` });
             }
 
             const id = crypto.randomUUID();
@@ -621,8 +637,9 @@ app.post(
     async function (req, res) {
         try {
             const { password } = req.body;
-            if (!password || password.length < 8) {
-                return res.status(400).json({ error: "Password must be at least 8 characters" });
+            const minPasswordLength = Number(await getAppSetting("minimum_password_length", "8"));
+            if (!password || password.length < minPasswordLength) {
+                return res.status(400).json({ error: `Password must be at least ${minPasswordLength} characters` });
             }
 
             const passwordHash = await bcrypt.hash(password, 12);
@@ -1100,7 +1117,8 @@ app.post("/api/tickets", async function (req, res) {
             });
         }
 
-        if (!TICKET_PRIORITIES.includes(priority || "Medium")) {
+        const configuredDefaultPriority = await getAppSetting("default_priority", "Medium");
+        if (!TICKET_PRIORITIES.includes(priority || configuredDefaultPriority)) {
             return res.status(400).json({
                 error: "Invalid priority"
             });
@@ -1109,6 +1127,10 @@ app.post("/api/tickets", async function (req, res) {
         let finalCustomerId = customerId;
 
         if (req.user.role === "customer") {
+            const customerCreationAllowed = await getAppSetting("allow_customer_ticket_creation", "1");
+            if (customerCreationAllowed !== "1") {
+                return res.status(403).json({ error: "Customer ticket creation is currently disabled" });
+            }
             const [customerRows] = await connection.query(
                 `
                 SELECT id
@@ -1136,8 +1158,8 @@ app.post("/api/tickets", async function (req, res) {
 
         await connection.beginTransaction();
 
-        const finalPriority = priority || "Medium";
-        const automaticSla = calculateSlaDeadline(finalPriority);
+        const finalPriority = priority || configuredDefaultPriority;
+        const automaticSla = await calculateSlaDeadline(finalPriority);
 
         await connection.query(
             `
@@ -1170,7 +1192,7 @@ app.post("/api/tickets", async function (req, res) {
             req.user.id,
             "Ticket created",
             null,
-            `New · SLA ${finalPriority}: ${SLA_HOURS[finalPriority]}h`
+            `New · SLA ${finalPriority}: ${await getSlaHours(finalPriority)}h`
         );
 
         await notifyTicketParticipants(
@@ -1250,7 +1272,7 @@ app.put("/api/tickets/:id", requireRole("admin", "technician"), async function (
             : current.sla_deadline;
 
         if (req.body.applySlaRule === true) {
-            slaDeadline = calculateSlaDeadline(priority);
+            slaDeadline = await calculateSlaDeadline(priority);
         }
 
         if (!TICKET_PRIORITIES.includes(priority)) {

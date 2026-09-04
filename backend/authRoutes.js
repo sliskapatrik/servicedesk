@@ -137,6 +137,14 @@ router.post(
             }
 
 
+            let sessionHours = 8;
+            try {
+                const [settingRows] = await db.query(`SELECT setting_value FROM app_settings WHERE setting_key = 'session_hours' LIMIT 1`);
+                if (settingRows.length) sessionHours = Math.max(1, Math.min(168, Number(settingRows[0].setting_value) || 8));
+            } catch (settingError) {
+                sessionHours = Number(String(process.env.JWT_EXPIRES_IN || "8h").replace(/[^0-9]/g, "")) || 8;
+            }
+
             const token =
                 jwt.sign(
                     {
@@ -157,8 +165,7 @@ router.post(
 
                     {
                         expiresIn:
-                            process.env.JWT_EXPIRES_IN ||
-                            "8h"
+                            `${sessionHours}h`
                     }
                 );
 

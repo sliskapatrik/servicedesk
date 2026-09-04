@@ -1,4 +1,4 @@
--- ServiceDesk complete database schema (v0.7)
+-- ServiceDesk complete database schema (v0.8)
 --
 -- CLEAN INSTALL:
 -- Import this file into an EMPTY MySQL/MariaDB database named `servicedesk`.
@@ -224,5 +224,49 @@ CREATE TABLE IF NOT EXISTS ticket_watchers (
     CONSTRAINT fk_ticket_watchers_ticket FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE,
     CONSTRAINT fk_ticket_watchers_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    setting_key VARCHAR(120) PRIMARY KEY,
+    setting_value TEXT NOT NULL,
+    updated_by VARCHAR(64) NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_app_settings_user FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS sla_rules (
+    priority ENUM('Low','Medium','High','Critical') PRIMARY KEY,
+    response_hours INT UNSIGNED NOT NULL,
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
+    updated_by VARCHAR(64) NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_sla_rules_user FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS settings_audit (
+    id VARCHAR(64) PRIMARY KEY,
+    user_id VARCHAR(64) NULL,
+    setting_key VARCHAR(120) NOT NULL,
+    old_value TEXT NULL,
+    new_value TEXT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_settings_audit_created (created_at),
+    CONSTRAINT fk_settings_audit_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO app_settings (setting_key, setting_value) VALUES
+('app_name', 'ServiceDesk'),
+('support_email', 'support@example.com'),
+('default_priority', 'Medium'),
+('allow_customer_ticket_creation', '1'),
+('session_hours', '8'),
+('minimum_password_length', '8')
+ON DUPLICATE KEY UPDATE setting_value = setting_value;
+
+INSERT INTO sla_rules (priority, response_hours, is_active) VALUES
+('Low', 72, 1),
+('Medium', 24, 1),
+('High', 8, 1),
+('Critical', 2, 1)
+ON DUPLICATE KEY UPDATE response_hours = response_hours;
 
 SET FOREIGN_KEY_CHECKS = 1;

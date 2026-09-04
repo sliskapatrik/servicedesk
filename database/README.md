@@ -1,9 +1,12 @@
-# Database setup
+# ServiceDesk database
 
-For a clean installation, create an empty `servicedesk` database and import `schema.sql`.
+`schema.sql` contains the complete current database structure for a **fresh ServiceDesk v0.8 installation**.
 
-`schema.sql` is the single source of truth for the current v0.7 database structure. Versioned Node migration scripts are intentionally not used.
+For a clean installation:
+1. Create an empty MySQL/MariaDB database named `servicedesk`.
+2. Import `schema.sql`.
+3. Optionally review/import `seed.sql` for demo content.
 
-For an existing installation, apply the release SQL manually in HeidiSQL before starting the updated application. `CREATE TABLE IF NOT EXISTS` does not add missing columns or constraints to tables that already exist.
+For an existing installation, do not expect `CREATE TABLE IF NOT EXISTS` to modify existing tables. Apply the manual SQL supplied with the release, then keep `schema.sql` as the reference schema.
 
-`seed.sql` is optional and contains example/reference seed data only.
+ServiceDesk intentionally does not keep versioned JavaScript migration files in the repository.

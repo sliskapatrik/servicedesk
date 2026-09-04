@@ -34,6 +34,7 @@
             <button class="menu-item staff-only" data-view="customers">Customers</button>
             <button class="menu-item admin-only" data-view="users">Users</button>
             <button class="menu-item admin-only" data-view="reports">Reports</button>
+            <button class="menu-item admin-only" data-view="settings">Settings</button>
         </nav>
     </aside>
 
@@ -266,6 +267,50 @@
                 <section class="panel analytics-panel">
                     <div class="section-header compact-header"><div><h2>Recent Audit Activity</h2><p class="section-description">Latest recorded changes across tickets.</p></div></div>
                     <div id="recentAuditList" class="audit-list"></div>
+                </section>
+            </div>
+        </section>
+
+        <section class="view" id="settingsView">
+            <div class="settings-header">
+                <div><h2>Admin Settings</h2><p class="section-description">Application identity, SLA policy and security configuration.</p></div>
+                <button class="primary-button" id="saveSettingsButton" type="button">Save settings</button>
+            </div>
+            <div class="settings-grid">
+                <section class="panel">
+                    <h2>Application</h2>
+                    <div class="settings-form">
+                        <label>Application name<input id="settingAppName" type="text" maxlength="80"></label>
+                        <label>Support email<input id="settingSupportEmail" type="email"></label>
+                        <label>Default ticket priority<select id="settingDefaultPriority"><option>Low</option><option>Medium</option><option>High</option><option>Critical</option></select></label>
+                        <label class="setting-check"><input id="settingCustomerCreation" type="checkbox"> Customers can create new tickets</label>
+                    </div>
+                </section>
+                <section class="panel">
+                    <h2>Security</h2>
+                    <div class="settings-form">
+                        <label>Session duration (hours)<input id="settingSessionHours" type="number" min="1" max="168"></label>
+                        <label>Minimum password length<input id="settingMinPassword" type="number" min="8" max="64"></label>
+                        <p class="muted">Session duration applies to newly issued login tokens. Existing sessions keep their original expiry.</p>
+                    </div>
+                </section>
+                <section class="panel settings-wide">
+                    <h2>SLA Rules</h2>
+                    <p class="section-description">Automatic deadline calculated when a ticket is created or SLA is recalculated.</p>
+                    <div class="sla-settings-grid">
+                        <label>Critical<input id="slaCritical" type="number" min="1" max="720"><span>hours</span></label>
+                        <label>High<input id="slaHigh" type="number" min="1" max="720"><span>hours</span></label>
+                        <label>Medium<input id="slaMedium" type="number" min="1" max="720"><span>hours</span></label>
+                        <label>Low<input id="slaLow" type="number" min="1" max="720"><span>hours</span></label>
+                    </div>
+                </section>
+                <section class="panel">
+                    <h2>System Overview</h2>
+                    <div id="settingsSystemSummary" class="settings-summary"></div>
+                </section>
+                <section class="panel">
+                    <h2>Configuration Audit</h2>
+                    <div id="settingsAuditList" class="audit-list settings-audit"></div>
                 </section>
             </div>
         </section>
